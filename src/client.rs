@@ -9,8 +9,8 @@ use tokio::net::UnixStream;
 
 pub async fn send_command(socket_path: &Path, command: Command) -> Result<()> {
     let request = match command {
-        Command::AddPeer { ticket, name, ip } => Request::AddPeer { ticket, name, ip },
-        Command::RemovePeer { name } => Request::RemovePeer { name },
+        Command::AddPeer { ticket } => Request::AddPeer { ticket },
+        Command::RemovePeer { ticket } => Request::RemovePeer { ticket },
         Command::Expose { port } => Request::Expose { port },
         Command::Unexpose { port } => Request::Unexpose { port },
         Command::List => Request::List,
@@ -38,6 +38,7 @@ pub async fn send_command(socket_path: &Path, command: Command) -> Result<()> {
     // Print response
     match response {
         Response::Ok => println!("OK"),
+        Response::Added { ip } => println!("{}", ip),
         Response::Ticket(ticket) => println!("{}", ticket),
         Response::List(info) => {
             println!("PEERS:");
@@ -48,17 +49,14 @@ pub async fn send_command(socket_path: &Path, command: Command) -> Result<()> {
                     "disconnected"
                 };
                 println!(
-                    "  {} ({}) @ {} - ports: {:?}",
-                    peer.name, status, peer.ip, peer.exposed_ports
+                    "  {} ({}) {} - ports: {:?}",
+                    peer.ip, status, peer.endpoint_id, peer.exposed_ports
                 );
             }
-            println!("\nEXPOSED PORTS: {:?}", info.exposed_ports);
+            println!("\nEXPOSED: {:?}", info.exposed_ports);
             println!("\nBINDINGS:");
             for binding in &info.bindings {
-                println!(
-                    "  {} → {}:{}",
-                    binding.local_addr, binding.peer_name, binding.peer_port
-                );
+                println!("  {} → port {}", binding.local_addr, binding.peer_port);
             }
         }
         Response::Error(e) => {

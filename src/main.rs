@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::IpAddr;
 use std::path::PathBuf;
 
 mod client;
@@ -11,7 +11,7 @@ mod tunnel;
 
 #[derive(Parser)]
 #[command(name = "pai-sho")]
-#[command(about = "Peer-to-peer TCP port forwarding over iroh")]
+#[command(about = "P2P TCP port forwarding over iroh")]
 struct Cli {
     /// Path to Unix socket
     #[arg(long, default_value = "/tmp/pai-sho.sock")]
@@ -22,46 +22,34 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
-enum Command {
+pub enum Command {
     /// Start the daemon
     Daemon {
         /// Host address for forwarding exposed ports
         #[arg(long, default_value = "127.0.0.1")]
         host: IpAddr,
-        /// Data directory for persistent state (default: ~/.pai-sho)
+        /// Data directory (default: ~/.pai-sho)
         #[arg(long)]
         data_dir: Option<PathBuf>,
     },
 
-    /// Add a peer
+    /// Add a peer (returns assigned IP)
     AddPeer {
-        /// Peer's iroh ticket
+        /// Peer's ticket (endpoint ID)
         ticket: String,
-        /// Friendly name for this peer
-        #[arg(long)]
-        name: String,
-        /// Local IP to bind peer's ports (e.g., 127.0.0.2)
-        #[arg(long)]
-        ip: Ipv4Addr,
     },
 
     /// Remove a peer
     RemovePeer {
-        /// Peer name
-        name: String,
+        /// Peer's ticket
+        ticket: String,
     },
 
     /// Expose a port to peers
-    Expose {
-        /// Port number to expose
-        port: u16,
-    },
+    Expose { port: u16 },
 
     /// Stop exposing a port
-    Unexpose {
-        /// Port number to unexpose
-        port: u16,
-    },
+    Unexpose { port: u16 },
 
     /// List peers, exposed ports, and bindings
     List,

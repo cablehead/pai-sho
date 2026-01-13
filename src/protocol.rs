@@ -13,20 +13,10 @@ pub const ALPN: &[u8] = b"PAI_SHO/1";
 /// Request from CLI client to daemon
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Request {
-    AddPeer {
-        ticket: String,
-        name: String,
-        ip: Ipv4Addr,
-    },
-    RemovePeer {
-        name: String,
-    },
-    Expose {
-        port: u16,
-    },
-    Unexpose {
-        port: u16,
-    },
+    AddPeer { ticket: String },
+    RemovePeer { ticket: String },
+    Expose { port: u16 },
+    Unexpose { port: u16 },
     List,
     Ticket,
 }
@@ -35,6 +25,7 @@ pub enum Request {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Response {
     Ok,
+    Added { ip: Ipv4Addr },
     Ticket(String),
     List(ListInfo),
     Error(String),
@@ -49,8 +40,8 @@ pub struct ListInfo {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PeerInfo {
-    pub name: String,
     pub ip: Ipv4Addr,
+    pub endpoint_id: String,
     pub connected: bool,
     pub exposed_ports: Vec<u16>,
 }
@@ -58,7 +49,6 @@ pub struct PeerInfo {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BindingInfo {
     pub local_addr: String,
-    pub peer_name: String,
     pub peer_port: u16,
 }
 

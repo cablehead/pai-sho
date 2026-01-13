@@ -110,22 +110,17 @@ impl Daemon {
     /// Handle a request from the CLI client
     pub async fn handle_request(self: &Arc<Self>, request: Request) -> Response {
         match request {
-            Request::AddPeer { ticket, name, ip } => {
-                match self
-                    .peers
-                    .add_peer(&self.endpoint, &ticket, name, ip, self.host)
-                    .await
-                {
-                    Ok(()) => {
-                        // Send our exposed ports to the new peer
-                        let ports = self.get_exposed_ports().await;
-                        self.peers.broadcast_exposed_ports(ports).await;
-                        Response::Ok
-                    }
-                    Err(e) => Response::Error(e.to_string()),
+            Request::AddPeer { ticket } => match self.peers.add_peer(&self.endpoint, &ticket).await
+            {
+                Ok(ip) => {
+                    // Send our exposed ports to the new peer
+                    let ports = self.get_exposed_ports().await;
+                    self.peers.broadcast_exposed_ports(ports).await;
+                    Response::Added { ip }
                 }
-            }
-            Request::RemovePeer { name } => match self.peers.remove_peer(&name).await {
+                Err(e) => Response::Error(e.to_string()),
+            },
+            Request::RemovePeer { ticket } => match self.peers.remove_peer(&ticket).await {
                 Ok(()) => Response::Ok,
                 Err(e) => Response::Error(e.to_string()),
             },
