@@ -1,7 +1,6 @@
 //! Protocol definitions for daemon<->client and peer<->peer communication.
 
 use serde::{Deserialize, Serialize};
-use std::net::Ipv4Addr;
 
 /// ALPN protocol identifier
 pub const ALPN: &[u8] = b"PAI_SHO/1";
@@ -25,7 +24,6 @@ pub enum Request {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Response {
     Ok,
-    Added { ip: Ipv4Addr },
     Ticket(String),
     List(ListInfo),
     Error(String),
@@ -40,7 +38,6 @@ pub struct ListInfo {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PeerInfo {
-    pub ip: Ipv4Addr,
     pub endpoint_id: String,
     pub connected: bool,
     pub exposed_ports: Vec<u16>,
@@ -48,8 +45,7 @@ pub struct PeerInfo {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BindingInfo {
-    pub local_addr: String,
-    pub peer_port: u16,
+    pub port: u16,
 }
 
 // ============================================================================

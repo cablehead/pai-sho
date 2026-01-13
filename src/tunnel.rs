@@ -5,12 +5,14 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{debug, error, info};
 
+const LOCALHOST: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
+
 /// Bind a local port and forward connections to a peer's port
-pub async fn bind_port<P>(local_ip: Ipv4Addr, port: u16, peer: &P) -> Result<()>
+pub async fn bind_port<P>(port: u16, peer: &P) -> Result<()>
 where
     P: PeerConnection + Send + Sync + 'static,
 {
-    let addr = SocketAddr::from((local_ip, port));
+    let addr = SocketAddr::from((LOCALHOST, port));
     let listener = TcpListener::bind(addr)
         .await
         .with_context(|| format!("failed to bind {}", addr))?;

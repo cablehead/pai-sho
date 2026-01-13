@@ -113,11 +113,11 @@ impl Daemon {
         match request {
             Request::AddPeer { ticket } => match self.peers.add_peer(&self.endpoint, &ticket).await
             {
-                Ok(ip) => {
+                Ok(()) => {
                     // Send our exposed ports to the new peer
                     let ports = self.get_exposed_ports().await;
                     self.peers.broadcast_exposed_ports(ports).await;
-                    Response::Added { ip }
+                    Response::Ok
                 }
                 Err(e) => Response::Error(e.to_string()),
             },

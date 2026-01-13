@@ -6,25 +6,13 @@ use anyhow::{anyhow, Context, Result};
 use dashmap::DashMap;
 use iroh::endpoint::Connection;
 use iroh::{Endpoint, EndpointId};
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
-/// Generate a random 127.x.x.x address (avoiding 127.0.0.1)
-fn random_loopback() -> Ipv4Addr {
-    loop {
-        let bytes: [u8; 3] = rand::random();
-        let ip = Ipv4Addr::new(127, bytes[0], bytes[1], bytes[2]);
-        if ip != Ipv4Addr::new(127, 0, 0, 1) {
-            return ip;
-        }
-    }
-}
-
 /// Info about a connected peer
 struct Peer {
-    ip: Ipv4Addr,
     endpoint_id: EndpointId,
     connection: RwLock<Option<Connection>>,
     /// Ports this peer exposes
@@ -36,31 +24,22 @@ struct Peer {
 pub struct PeerManager {
     /// Peers by endpoint ID
     peers: DashMap<EndpointId, Arc<Peer>>,
-    /// IP -> endpoint ID (for collision detection)
-    ip_to_id: DashMap<Ipv4Addr, EndpointId>,
 }
 
 impl PeerManager {
     pub fn new() -> Self {
         Self {
             peers: DashMap::new(),
-            ip_to_id: DashMap::new(),
         }
     }
 
     /// Add a new peer and connect to it
-    pub async fn add_peer(&self, endpoint: &Endpoint, ticket: &str) -> Result<Ipv4Addr> {
+    pub async fn add_peer(&self, endpoint: &Endpoint, ticket: &str) -> Result<()> {
         let endpoint_id: EndpointId = ticket.parse().context("invalid ticket")?;
 
         // Check if already connected
         if self.peers.contains_key(&endpoint_id) {
             return Err(anyhow!("peer already exists"));
-        }
-
-        // Generate random IP and check for collision
-        let ip = random_loopback();
-        if self.ip_to_id.contains_key(&ip) {
-            panic!("IP collision: {} - this should be astronomically rare", ip);
         }
 
         // Connect to the peer
@@ -69,10 +48,9 @@ impl PeerManager {
             .await
             .context("failed to connect to peer")?;
 
-        info!("connected to {} at {}", endpoint_id, ip);
+        info!("connected to {}", endpoint_id);
 
         let peer = Arc::new(Peer {
-            ip,
             endpoint_id,
             connection: RwLock::new(Some(conn)),
             exposed_ports: RwLock::new(Vec::new()),
@@ -80,7 +58,6 @@ impl PeerManager {
         });
 
         self.peers.insert(endpoint_id, peer.clone());
-        self.ip_to_id.insert(ip, endpoint_id);
 
         // Spawn task to handle incoming messages from this peer
         let peer_clone = peer.clone();
@@ -90,7 +67,7 @@ impl PeerManager {
             }
         });
 
-        Ok(ip)
+        Ok(())
     }
 
     /// Handle messages from a peer
@@ -107,7 +84,7 @@ impl PeerManager {
 
             match msg {
                 PeerMessage::ExposedPorts(ports) => {
-                    info!("{} exposed ports: {:?}", peer.ip, ports);
+                    info!("{} exposed ports: {:?}", peer.endpoint_id, ports);
                     Self::update_peer_ports(&peer, ports).await;
                 }
                 PeerMessage::Connect { port: _ } => {
@@ -129,7 +106,7 @@ impl PeerManager {
             if !new_ports.contains(port) {
                 if let Some((_, handle)) = peer.bindings.remove(port) {
                     handle.abort();
-                    info!("removed binding {}:{}", peer.ip, port);
+                    info!("removed binding for port {}", port);
                 }
             }
         }
@@ -139,12 +116,12 @@ impl PeerManager {
             if !old_ports.contains(&port) && !peer.bindings.contains_key(&port) {
                 let peer_clone = peer.clone();
                 let handle = tokio::spawn(async move {
-                    if let Err(e) = tunnel::bind_port(peer_clone.ip, port, &peer_clone).await {
-                        error!("binding {}:{} failed: {}", peer_clone.ip, port, e);
+                    if let Err(e) = tunnel::bind_port(port, &peer_clone).await {
+                        error!("binding port {} failed: {}", port, e);
                     }
                 });
                 peer.bindings.insert(port, handle);
-                info!("created binding {}:{}", peer.ip, port);
+                info!("created binding for port {}", port);
             }
         }
 
@@ -159,8 +136,6 @@ impl PeerManager {
             .peers
             .remove(&endpoint_id)
             .ok_or_else(|| anyhow!("peer not found"))?;
-
-        self.ip_to_id.remove(&peer.ip);
 
         // Close connection
         if let Some(conn) = peer.connection.write().await.take() {
@@ -186,21 +161,14 @@ impl PeerManager {
         let remote_id = conn.remote_id()?;
 
         // Check if this is a known peer
-        let peer = if let Some(peer) = self.peers.get(&remote_id) {
+        if let Some(peer) = self.peers.get(&remote_id) {
             *peer.connection.write().await = Some(conn.clone());
-            info!("{} reconnected", peer.ip);
-            peer.clone()
+            info!("{} reconnected", remote_id);
         } else {
-            // New incoming peer - assign random IP and track them
-            let ip = random_loopback();
-            if self.ip_to_id.contains_key(&ip) {
-                panic!("IP collision: {} - this should be astronomically rare", ip);
-            }
-
-            info!("accepted connection from {} at {}", remote_id, ip);
+            // New incoming peer - track them
+            info!("accepted connection from {}", remote_id);
 
             let peer = Arc::new(Peer {
-                ip,
                 endpoint_id: remote_id,
                 connection: RwLock::new(Some(conn.clone())),
                 exposed_ports: RwLock::new(Vec::new()),
@@ -208,7 +176,6 @@ impl PeerManager {
             });
 
             self.peers.insert(remote_id, peer.clone());
-            self.ip_to_id.insert(ip, remote_id);
 
             // Spawn recv loop for this peer
             let peer_clone = peer.clone();
@@ -217,8 +184,6 @@ impl PeerManager {
                     warn!("peer recv loop ended: {}", e);
                 }
             });
-
-            peer
         };
 
         // Send our exposed ports to this peer
@@ -228,12 +193,12 @@ impl PeerManager {
             match conn.open_uni().await {
                 Ok(mut send) => {
                     if let Err(e) = send.write_all(&data).await {
-                        warn!("failed to send exposed ports to {}: {}", peer.ip, e);
+                        warn!("failed to send exposed ports to {}: {}", remote_id, e);
                     }
                     let _ = send.finish();
                 }
                 Err(e) => {
-                    warn!("failed to open stream to {}: {}", peer.ip, e);
+                    warn!("failed to open stream to {}: {}", remote_id, e);
                 }
             }
         }
@@ -279,12 +244,12 @@ impl PeerManager {
                 match conn.open_uni().await {
                     Ok(mut send) => {
                         if let Err(e) = send.write_all(&data).await {
-                            warn!("failed to send to {}: {}", peer.ip, e);
+                            warn!("failed to send to {}: {}", peer.endpoint_id, e);
                         }
                         let _ = send.finish();
                     }
                     Err(e) => {
-                        warn!("failed to open stream to {}: {}", peer.ip, e);
+                        warn!("failed to open stream to {}: {}", peer.endpoint_id, e);
                     }
                 }
             }
@@ -298,7 +263,6 @@ impl PeerManager {
             let peer = entry.value();
             let connected = peer.connection.read().await.is_some();
             result.push(PeerInfo {
-                ip: peer.ip,
                 endpoint_id: peer.endpoint_id.to_string(),
                 connected,
                 exposed_ports: peer.exposed_ports.read().await.clone(),
@@ -314,8 +278,7 @@ impl PeerManager {
             let peer = entry.value();
             for binding in peer.bindings.iter() {
                 result.push(BindingInfo {
-                    local_addr: format!("{}:{}", peer.ip, binding.key()),
-                    peer_port: *binding.key(),
+                    port: *binding.key(),
                 });
             }
         }

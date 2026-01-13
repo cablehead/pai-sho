@@ -38,7 +38,6 @@ pub async fn send_command(socket_path: &Path, command: Command) -> Result<()> {
     // Print response
     match response {
         Response::Ok => println!("OK"),
-        Response::Added { ip } => println!("{}", ip),
         Response::Ticket(ticket) => println!("{}", ticket),
         Response::List(info) => {
             println!("PEERS:");
@@ -49,14 +48,14 @@ pub async fn send_command(socket_path: &Path, command: Command) -> Result<()> {
                     "disconnected"
                 };
                 println!(
-                    "  {} ({}) {} - ports: {:?}",
-                    peer.ip, status, peer.endpoint_id, peer.exposed_ports
+                    "  {} ({}) - ports: {:?}",
+                    peer.endpoint_id, status, peer.exposed_ports
                 );
             }
             println!("\nEXPOSED: {:?}", info.exposed_ports);
             println!("\nBINDINGS:");
             for binding in &info.bindings {
-                println!("  {} → port {}", binding.local_addr, binding.peer_port);
+                println!("  127.0.0.1:{}", binding.port);
             }
         }
         Response::Error(e) => {
