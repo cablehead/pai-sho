@@ -1,7 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::net::IpAddr;
-use std::path::PathBuf;
 
 mod client;
 mod daemon;
@@ -15,7 +14,7 @@ mod tunnel;
 struct Cli {
     /// Path to Unix socket
     #[arg(long, default_value = "/tmp/pai-sho.sock")]
-    socket: PathBuf,
+    socket: String,
 
     #[command(subcommand)]
     command: Command,
@@ -28,9 +27,6 @@ pub enum Command {
         /// Host address for forwarding exposed ports
         #[arg(long, default_value = "127.0.0.1")]
         host: IpAddr,
-        /// Data directory (default: ~/.pai-sho)
-        #[arg(long)]
-        data_dir: Option<PathBuf>,
     },
 
     /// Add a peer (returns assigned IP)
@@ -69,12 +65,14 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
+    let socket_path = std::path::Path::new(&cli.socket);
+
     match cli.command {
-        Command::Daemon { host, data_dir } => {
-            daemon::run(host, &cli.socket, data_dir).await?;
+        Command::Daemon { host } => {
+            daemon::run(host, socket_path).await?;
         }
         _ => {
-            client::send_command(&cli.socket, cli.command).await?;
+            client::send_command(socket_path, cli.command).await?;
         }
     }
 

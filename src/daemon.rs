@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use iroh::{Endpoint, SecretKey};
 use std::collections::HashSet;
 use std::net::IpAddr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
@@ -25,8 +25,8 @@ pub struct Daemon {
 }
 
 impl Daemon {
-    pub async fn new(host: IpAddr, data_dir: Option<PathBuf>) -> Result<Arc<Self>> {
-        let secret_key = load_or_create_key(data_dir)?;
+    pub async fn new(host: IpAddr) -> Result<Arc<Self>> {
+        let secret_key = SecretKey::generate(&mut rand::rng());
 
         let endpoint = Endpoint::builder()
             .secret_key(secret_key)
@@ -139,47 +139,12 @@ impl Daemon {
     }
 }
 
-/// Load or create a persistent secret key
-fn load_or_create_key(data_dir: Option<PathBuf>) -> Result<SecretKey> {
-    let data_dir = match data_dir {
-        Some(dir) => dir,
-        None => {
-            let home = std::env::var("HOME").context("HOME not set")?;
-            PathBuf::from(home).join(".pai-sho")
-        }
-    };
-
-    std::fs::create_dir_all(&data_dir)
-        .with_context(|| format!("failed to create data dir: {}", data_dir.display()))?;
-
-    let key_path = data_dir.join("secret.key");
-
-    if key_path.exists() {
-        let key_hex = std::fs::read_to_string(&key_path)
-            .with_context(|| format!("failed to read key from {}", key_path.display()))?;
-        let key_hex = key_hex.trim();
-        let key_bytes: [u8; 32] = hex::decode(key_hex)
-            .context("invalid key hex")?
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("invalid key length"))?;
-        info!("loaded existing secret key from {}", key_path.display());
-        Ok(SecretKey::from_bytes(&key_bytes))
-    } else {
-        let secret_key = SecretKey::generate(&mut rand::rng());
-        let key_hex = hex::encode(secret_key.to_bytes());
-        std::fs::write(&key_path, &key_hex)
-            .with_context(|| format!("failed to write key to {}", key_path.display()))?;
-        info!("created new secret key at {}", key_path.display());
-        Ok(secret_key)
-    }
-}
-
 /// Run the daemon
-pub async fn run(host: IpAddr, socket_path: &Path, data_dir: Option<PathBuf>) -> Result<()> {
+pub async fn run(host: IpAddr, socket_path: &Path) -> Result<()> {
     // Clean up old socket
     let _ = std::fs::remove_file(socket_path);
 
-    let daemon = Daemon::new(host, data_dir).await?;
+    let daemon = Daemon::new(host).await?;
 
     println!("Ticket: {}", daemon.ticket());
     info!("daemon started, host={}", host);

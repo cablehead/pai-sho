@@ -17,13 +17,13 @@ pai-sho [--socket <path>] <command>
 ### Commands
 
 ```
-daemon [--host <ip>] [--data-dir <path>]   Start the daemon
-ticket                                      Print daemon's ticket
-add-peer <ticket>                           Connect to a peer
-remove-peer <ticket>                        Disconnect from a peer
-expose <port>                               Expose a local port to peers
-unexpose <port>                             Stop exposing a port
-list                                        Show peers, exposed ports, bindings
+daemon [--host <ip>]    Start the daemon
+ticket                  Print daemon's ticket
+add-peer <ticket>       Connect to a peer
+remove-peer <ticket>    Disconnect from a peer
+expose <port>           Expose a local port to peers
+unexpose <port>         Stop exposing a port
+list                    Show peers, exposed ports, bindings
 ```
 
 ### Daemon Options
@@ -31,7 +31,6 @@ list                                        Show peers, exposed ports, bindings
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--host` | `127.0.0.1` | Address to forward exposed ports to |
-| `--data-dir` | `~/.pai-sho` | Persistent data directory |
 
 ## Example
 
