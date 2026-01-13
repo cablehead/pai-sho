@@ -17,7 +17,7 @@ pai-sho [--socket <path>] <command>
 ### Commands
 
 ```
-daemon [--host <ip>]    Start the daemon
+daemon [options]        Start the daemon
 ticket                  Print daemon's ticket
 add-peer <ticket>       Connect to a peer
 remove-peer <ticket>    Disconnect from a peer
@@ -31,26 +31,19 @@ list                    Show peers, exposed ports, bindings
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--host` | `127.0.0.1` | Address to forward exposed ports to |
+| `-a, --add` | | Add peer on startup (repeatable) |
+| `-e, --expose` | | Expose port on startup (repeatable) |
 
 ## Example
 
 ```sh
-# Machine A
-pai-sho daemon
+# Machine A - expose port 8080
+pai-sho daemon -e 8080
 # prints ticket: abc123...
 
-pai-sho expose 8080
-
-# Machine B
-pai-sho daemon
-pai-sho add-peer abc123...
+# Machine B - connect to A
+pai-sho daemon -a abc123...
 
 # Now B can reach A's port 8080 at 127.0.0.1:8080
 curl http://127.0.0.1:8080
-```
-
-## Build
-
-```sh
-cargo build --release
 ```

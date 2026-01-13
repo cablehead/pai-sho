@@ -140,7 +140,12 @@ impl Daemon {
 }
 
 /// Run the daemon
-pub async fn run(host: IpAddr, socket_path: &Path) -> Result<()> {
+pub async fn run(
+    host: IpAddr,
+    socket_path: &Path,
+    peers: Vec<String>,
+    ports: Vec<u16>,
+) -> Result<()> {
     // Clean up old socket
     let _ = std::fs::remove_file(socket_path);
 
@@ -148,6 +153,29 @@ pub async fn run(host: IpAddr, socket_path: &Path) -> Result<()> {
 
     println!("Ticket: {}", daemon.ticket());
     info!("daemon started, host={}", host);
+
+    // Expose ports specified on command line
+    for port in ports {
+        daemon.expose(port).await?;
+    }
+
+    // Add peers specified on command line
+    for ticket in &peers {
+        match daemon.peers.add_peer(&daemon.endpoint, ticket).await {
+            Ok(()) => {
+                info!("added peer {}", ticket);
+            }
+            Err(e) => {
+                error!("failed to add peer {}: {}", ticket, e);
+            }
+        }
+    }
+
+    // Broadcast exposed ports to newly added peers
+    if !peers.is_empty() {
+        let ports = daemon.get_exposed_ports().await;
+        daemon.peers.broadcast_exposed_ports(ports).await;
+    }
 
     // Start accepting peer connections
     let accept_daemon = daemon.clone();

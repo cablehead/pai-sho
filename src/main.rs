@@ -27,6 +27,12 @@ pub enum Command {
         /// Host address for forwarding exposed ports
         #[arg(long, default_value = "127.0.0.1")]
         host: IpAddr,
+        /// Add peer(s) on startup
+        #[arg(short = 'a', long = "add")]
+        peers: Vec<String>,
+        /// Expose port(s) on startup
+        #[arg(short = 'e', long = "expose")]
+        ports: Vec<u16>,
     },
 
     /// Add a peer (returns assigned IP)
@@ -68,8 +74,8 @@ async fn main() -> Result<()> {
     let socket_path = std::path::Path::new(&cli.socket);
 
     match cli.command {
-        Command::Daemon { host } => {
-            daemon::run(host, socket_path).await?;
+        Command::Daemon { host, peers, ports } => {
+            daemon::run(host, socket_path, peers, ports).await?;
         }
         _ => {
             client::send_command(socket_path, cli.command).await?;
