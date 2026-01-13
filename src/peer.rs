@@ -177,15 +177,65 @@ impl PeerManager {
     }
 
     /// Handle an incoming connection from a peer
-    pub async fn handle_connection(&self, conn: Connection, host: IpAddr) -> Result<()> {
+    pub async fn handle_connection(
+        &self,
+        conn: Connection,
+        host: IpAddr,
+        our_exposed_ports: Vec<u16>,
+    ) -> Result<()> {
         let remote_id = conn.remote_id()?;
 
         // Check if this is a known peer
-        if let Some(peer) = self.peers.get(&remote_id) {
+        let peer = if let Some(peer) = self.peers.get(&remote_id) {
             *peer.connection.write().await = Some(conn.clone());
             info!("{} reconnected", peer.ip);
+            peer.clone()
         } else {
-            info!("accepted connection from {}", remote_id);
+            // New incoming peer - assign random IP and track them
+            let ip = random_loopback();
+            if self.ip_to_id.contains_key(&ip) {
+                panic!("IP collision: {} - this should be astronomically rare", ip);
+            }
+
+            info!("accepted connection from {} at {}", remote_id, ip);
+
+            let peer = Arc::new(Peer {
+                ip,
+                endpoint_id: remote_id,
+                connection: RwLock::new(Some(conn.clone())),
+                exposed_ports: RwLock::new(Vec::new()),
+                bindings: DashMap::new(),
+            });
+
+            self.peers.insert(remote_id, peer.clone());
+            self.ip_to_id.insert(ip, remote_id);
+
+            // Spawn recv loop for this peer
+            let peer_clone = peer.clone();
+            tokio::spawn(async move {
+                if let Err(e) = Self::peer_recv_loop(peer_clone).await {
+                    warn!("peer recv loop ended: {}", e);
+                }
+            });
+
+            peer
+        };
+
+        // Send our exposed ports to this peer
+        if !our_exposed_ports.is_empty() {
+            let msg = PeerMessage::ExposedPorts(our_exposed_ports);
+            let data = serde_json::to_vec(&msg).unwrap();
+            match conn.open_uni().await {
+                Ok(mut send) => {
+                    if let Err(e) = send.write_all(&data).await {
+                        warn!("failed to send exposed ports to {}: {}", peer.ip, e);
+                    }
+                    let _ = send.finish();
+                }
+                Err(e) => {
+                    warn!("failed to open stream to {}: {}", peer.ip, e);
+                }
+            }
         }
 
         // Handle tunnel requests (bidirectional streams)

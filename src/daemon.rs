@@ -104,7 +104,8 @@ impl Daemon {
         info!("incoming connection from {}", remote_id);
 
         // Handle peer protocol (port announcements, tunnel requests)
-        self.peers.handle_connection(conn, self.host).await
+        let exposed = self.get_exposed_ports().await;
+        self.peers.handle_connection(conn, self.host, exposed).await
     }
 
     /// Handle a request from the CLI client
