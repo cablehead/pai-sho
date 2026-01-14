@@ -2,6 +2,10 @@
 
 P2P TCP port forwarding over [iroh](https://github.com/n0-computer/iroh).
 
+## Status
+
+early sketch. currently vibe coded. seems to work.
+
 ## Usage
 
 ```
