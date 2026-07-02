@@ -20,7 +20,7 @@ pub struct Daemon {
     /// Directed grants: which port is exposed to which peer
     grants: Arc<RwLock<Grants>>,
     /// Connected peers
-    peers: PeerManager,
+    peers: Arc<PeerManager>,
     /// Enrollment tokens minted by grant-token
     tokens: Arc<Tokens>,
 }
@@ -93,7 +93,13 @@ impl Daemon {
         let pinned = pins.load()?;
 
         let daemon = Arc::new(Self {
-            peers: PeerManager::new(endpoint.clone(), host, grants.clone(), tokens.clone(), pins),
+            peers: Arc::new(PeerManager::new(
+                endpoint.clone(),
+                host,
+                grants.clone(),
+                tokens.clone(),
+                pins,
+            )),
             endpoint,
             grants,
             tokens,

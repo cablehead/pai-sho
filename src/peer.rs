@@ -18,13 +18,15 @@ use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::{Mutex, Notify, RwLock};
 use tracing::{error, info, warn};
 
 const BACKOFF_INITIAL: Duration = Duration::from_secs(1);
 const BACKOFF_MAX: Duration = Duration::from_secs(60);
 /// How long an unknown incoming peer gets to present its enrollment token
 const ENROLL_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a probed connection gets to prove it is alive
+const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Info about a connected peer
 struct Peer {
@@ -82,6 +84,9 @@ pub struct PeerManager {
     tokens: Arc<Tokens>,
     /// Peers pinned at enrollment, persisted across restarts
     pins: Pins,
+    /// Serializes binding creation/teardown so cross-peer port collision
+    /// checks and the binds that follow them are atomic
+    bind_lock: Mutex<()>,
 }
 
 impl PeerManager {
@@ -99,13 +104,18 @@ impl PeerManager {
             grants,
             tokens,
             pins,
+            bind_lock: Mutex::new(()),
         }
     }
 
     /// Add a new peer and connect to it. If `enroll_token` is set, present
     /// it on connect and on every reconnect (the peer ignores it once we
     /// are pinned).
-    pub async fn add_peer(&self, ticket: &str, enroll_token: Option<String>) -> Result<()> {
+    pub async fn add_peer(
+        self: &Arc<Self>,
+        ticket: &str,
+        enroll_token: Option<String>,
+    ) -> Result<()> {
         let endpoint_id: EndpointId = ticket.parse().context("invalid ticket")?;
 
         // Check if already connected
@@ -141,7 +151,7 @@ impl PeerManager {
 
     /// Register a peer pinned at a previous enrollment (loaded at startup).
     /// We never dial it -- it phones home.
-    pub fn add_pinned(&self, key: &str, label: &str) -> Result<()> {
+    pub fn add_pinned(self: &Arc<Self>, key: &str, label: &str) -> Result<()> {
         let endpoint_id: EndpointId = key.parse().context("invalid pinned key")?;
         if self.peers.contains_key(&endpoint_id) {
             return Ok(());
@@ -163,29 +173,22 @@ impl PeerManager {
     }
 
     /// Spawn the connection management loop for a peer
-    fn spawn_connection_loop(&self, peer: Arc<Peer>) {
-        let endpoint = self.endpoint.clone();
-        let host = self.host;
-        let grants = self.grants.clone();
+    fn spawn_connection_loop(self: &Arc<Self>, peer: Arc<Peer>) {
+        let manager = self.clone();
         tokio::spawn(async move {
-            Self::peer_connection_loop(endpoint, peer, host, grants).await;
+            Self::peer_connection_loop(manager, peer).await;
         });
     }
 
     /// Long-running task managing a peer's connection lifecycle.
     /// Runs the unified connection handler and reconnects with backoff on failure.
-    async fn peer_connection_loop(
-        endpoint: Endpoint,
-        peer: Arc<Peer>,
-        host: IpAddr,
-        grants: Arc<RwLock<Grants>>,
-    ) {
+    async fn peer_connection_loop(manager: Arc<PeerManager>, peer: Arc<Peer>) {
         let mut backoff = BACKOFF_INITIAL;
 
         loop {
             let has_conn = peer.connection.read().await.is_some();
             if has_conn {
-                if let Err(e) = Self::run_connection(&peer, host, &grants).await {
+                if let Err(e) = Self::run_connection(&manager, &peer).await {
                     if peer.removed.load(Ordering::Relaxed) {
                         return;
                     }
@@ -229,7 +232,7 @@ impl PeerManager {
                     return;
                 }
 
-                match endpoint.connect(peer.endpoint_id, ALPN).await {
+                match manager.endpoint.connect(peer.endpoint_id, ALPN).await {
                     Ok(conn) => {
                         info!("reconnected to {}", peer.endpoint_id);
                         *peer.connection.write().await = Some(conn.clone());
@@ -243,7 +246,7 @@ impl PeerManager {
                                 warn!("failed to send enroll token: {}", e);
                             }
                         }
-                        Self::send_exposed_ports_to_peer(&peer, &grants).await;
+                        Self::send_exposed_ports_to_peer(&peer, &manager.grants).await;
                         backoff = BACKOFF_INITIAL;
                         break;
                     }
@@ -258,11 +261,7 @@ impl PeerManager {
 
     /// Unified connection handler: accepts both uni streams (control messages)
     /// and bi streams (tunnel requests) on the current connection.
-    async fn run_connection(
-        peer: &Arc<Peer>,
-        host: IpAddr,
-        grants: &Arc<RwLock<Grants>>,
-    ) -> Result<()> {
+    async fn run_connection(manager: &Arc<PeerManager>, peer: &Arc<Peer>) -> Result<()> {
         let conn = {
             let guard = peer.connection.read().await;
             guard.clone().ok_or_else(|| anyhow!("disconnected"))?
@@ -272,15 +271,17 @@ impl PeerManager {
             tokio::select! {
                 result = conn.accept_uni() => {
                     let recv = result?;
+                    let manager = manager.clone();
                     let peer = peer.clone();
                     tokio::spawn(async move {
-                        Self::handle_uni_stream(recv, &peer).await;
+                        Self::handle_uni_stream(&manager, recv, &peer).await;
                     });
                 }
                 result = conn.accept_bi() => {
                     let (send, recv) = result?;
+                    let host = manager.host;
+                    let grants = manager.grants.clone();
                     let peer = peer.clone();
-                    let grants = grants.clone();
                     tokio::spawn(async move {
                         if let Err(e) = Self::handle_bi_stream(host, &grants, &peer, send, recv).await {
                             error!("tunnel error: {}", e);
@@ -291,7 +292,11 @@ impl PeerManager {
         }
     }
 
-    async fn handle_uni_stream(mut recv: iroh::endpoint::RecvStream, peer: &Arc<Peer>) {
+    async fn handle_uni_stream(
+        manager: &Arc<PeerManager>,
+        mut recv: iroh::endpoint::RecvStream,
+        peer: &Arc<Peer>,
+    ) {
         let data = match recv.read_to_end(64 * 1024).await {
             Ok(data) => data,
             Err(e) => {
@@ -309,7 +314,7 @@ impl PeerManager {
         match msg {
             PeerMessage::ExposedPorts(ports) => {
                 info!("{} exposed ports: {:?}", peer.endpoint_id, ports);
-                Self::update_peer_ports(peer, ports).await;
+                manager.update_peer_ports(peer, ports).await;
             }
             PeerMessage::Connect { port: _ } => {
                 warn!("unexpected Connect message on control stream");
@@ -345,71 +350,169 @@ impl PeerManager {
         tunnel::handle_tunnel(host, port, send, recv).await
     }
 
-    /// Update peer's exposed ports and manage bindings
-    async fn update_peer_ports(peer: &Arc<Peer>, new_ports: Vec<u16>) {
-        let old_ports = peer.exposed_ports.read().await.clone();
+    /// Update peer's exposed ports and manage bindings.
+    ///
+    /// Cross-peer port collisions are resolved here, atomically under the
+    /// bind lock: if another peer already holds an announced port, probe
+    /// it -- a live holder wins (the announcer is booted entirely), a
+    /// stale one is fully evicted and the announcer's bind proceeds in
+    /// the same pass.
+    async fn update_peer_ports(self: &Arc<Self>, peer: &Arc<Peer>, new_ports: Vec<u16>) {
+        let _guard = self.bind_lock.lock().await;
 
-        // Stop bindings for removed ports
+        // Stop bindings for ports no longer announced
+        let old_ports = peer.exposed_ports.read().await.clone();
         for port in &old_ports {
             if !new_ports.contains(port) {
-                if let Some((_, handle)) = peer.bindings.remove(port) {
-                    handle.abort();
-                    info!("removed binding for port {}", port);
-                }
+                Self::release_binding(peer, *port).await;
             }
         }
 
-        // Create bindings for new ports
+        // Create bindings for new ports. A port with no binding is retried
+        // on every announce -- a failed bind never leaves a phantom entry.
         for &port in &new_ports {
-            if !old_ports.contains(&port) && !peer.bindings.contains_key(&port) {
-                let peer_clone = peer.clone();
-                let handle = tokio::spawn(async move {
-                    if let Err(e) = tunnel::bind_port(port, &peer_clone).await {
-                        error!("binding port {} failed: {}", port, e);
-                    }
-                });
-                peer.bindings.insert(port, handle);
-                info!("created binding for port {}", port);
+            if peer.bindings.contains_key(&port) {
+                continue;
+            }
+
+            if let Some(holder) = self.find_holder(port, &peer.endpoint_id) {
+                if Self::probe_peer(&holder).await {
+                    // Realistic cause: our own launcher double-issued the
+                    // port number. Be loud; boot the announcer entirely.
+                    error!(
+                        "rejected incoming peer {}: port {} already held by connected peer {} (\"{}\")",
+                        peer.endpoint_id,
+                        port,
+                        holder.endpoint_id,
+                        holder.label.as_deref().unwrap_or("-")
+                    );
+                    self.evict(&peer.endpoint_id, "port collision").await;
+                    return;
+                }
+                warn!(
+                    "evicting stale peer {} (\"{}\"): port {} reclaimed by {}",
+                    holder.endpoint_id,
+                    holder.label.as_deref().unwrap_or("-"),
+                    port,
+                    peer.endpoint_id
+                );
+                self.evict(&holder.endpoint_id, "stale, port reclaimed")
+                    .await;
+            }
+
+            // Bind before recording anything; the listener is live from here
+            match tunnel::bind_listener(port).await {
+                Ok(listener) => {
+                    let peer_clone = peer.clone();
+                    let handle = tokio::spawn(async move {
+                        if let Err(e) = tunnel::serve_listener(listener, port, &peer_clone).await {
+                            error!("binding port {} failed: {}", port, e);
+                        }
+                    });
+                    peer.bindings.insert(port, handle);
+                    info!("created binding for port {}", port);
+                }
+                Err(e) => {
+                    error!("binding port {} failed: {}", port, e);
+                }
             }
         }
 
         *peer.exposed_ports.write().await = new_ports;
     }
 
+    /// Another peer (not `exclude`) holding a binding for `port`
+    fn find_holder(&self, port: u16, exclude: &EndpointId) -> Option<Arc<Peer>> {
+        self.peers
+            .iter()
+            .find(|e| e.key() != exclude && e.value().bindings.contains_key(&port))
+            .map(|e| e.value().clone())
+    }
+
+    /// Is this peer's connection actually alive? A connection can look
+    /// open for up to the QUIC idle timeout after the peer dies, so ask:
+    /// request a tunnel to port 0 (never grantable) and wait for the peer
+    /// to refuse it. Any stream response within PROBE_TIMEOUT means alive.
+    async fn probe_peer(peer: &Arc<Peer>) -> bool {
+        let conn = {
+            let guard = peer.connection.read().await;
+            match guard.as_ref() {
+                Some(conn) if conn.close_reason().is_none() => conn.clone(),
+                _ => return false,
+            }
+        };
+
+        let probe = async {
+            let (mut send, mut recv) = conn.open_bi().await.ok()?;
+            send.write_all(&0u16.to_be_bytes()).await.ok()?;
+            let _ = send.finish();
+            // Alive peers close the stream promptly (ungranted port);
+            // either a clean end or a reset counts as a response
+            let _ = recv.read_to_end(16).await;
+            Some(())
+        };
+
+        let responded = tokio::time::timeout(PROBE_TIMEOUT, probe)
+            .await
+            .ok()
+            .flatten()
+            .is_some();
+        responded && conn.close_reason().is_none()
+    }
+
+    /// Release one binding, waiting for its task to finish so the
+    /// TcpListener is actually dropped before the port is reused
+    async fn release_binding(peer: &Arc<Peer>, port: u16) {
+        if let Some((_, handle)) = peer.bindings.remove(&port) {
+            handle.abort();
+            let _ = handle.await;
+            info!("removed binding for port {}", port);
+        }
+    }
+
+    /// Fully evict a peer: close its connection, release every binding it
+    /// holds (waiting for the listeners to drop), clear grants naming it,
+    /// and delete its pin. Callers hold the bind lock where it matters.
+    async fn evict(&self, endpoint_id: &EndpointId, reason: &str) {
+        if let Some((_, peer)) = self.peers.remove(endpoint_id) {
+            peer.removed.store(true, Ordering::Relaxed);
+            peer.conn_notify.notify_one();
+
+            if let Some(conn) = peer.connection.write().await.take() {
+                conn.close(0u32.into(), reason.as_bytes());
+            }
+
+            let ports: Vec<u16> = peer.bindings.iter().map(|e| *e.key()).collect();
+            for port in ports {
+                Self::release_binding(&peer, port).await;
+            }
+        }
+
+        self.grants.write().await.revoke_grantee(endpoint_id);
+        if let Err(e) = self.pins.remove(&endpoint_id.to_string()) {
+            warn!("failed to remove pin for {}: {}", endpoint_id, e);
+        }
+
+        info!("evicted peer {} ({})", endpoint_id, reason);
+    }
+
     /// Remove a peer by ticket
     pub async fn remove_peer(&self, ticket: &str) -> Result<()> {
         let endpoint_id: EndpointId = ticket.parse().context("invalid ticket")?;
 
-        let (_, peer) = self
-            .peers
-            .remove(&endpoint_id)
-            .ok_or_else(|| anyhow!("peer not found"))?;
-
-        // Signal connection loop to exit
-        peer.removed.store(true, Ordering::Relaxed);
-        peer.conn_notify.notify_one();
-
-        // Close connection
-        if let Some(conn) = peer.connection.write().await.take() {
-            conn.close(0u32.into(), b"removed");
+        if !self.peers.contains_key(&endpoint_id) {
+            return Err(anyhow!("peer not found"));
         }
 
-        // Abort all bindings
-        for entry in peer.bindings.iter() {
-            entry.value().abort();
-        }
-
-        // Drop its pin so it cannot reconnect as a known peer
-        self.pins.remove(ticket)?;
-
-        info!("removed peer {}", endpoint_id);
+        let _guard = self.bind_lock.lock().await;
+        self.evict(&endpoint_id, "removed").await;
         Ok(())
     }
 
     /// Handle an incoming connection from a peer. Known peers (added by
     /// ticket or pinned) are reconnected; unknown peers must enroll with a
     /// valid token or are refused.
-    pub async fn handle_connection(&self, conn: Connection) -> Result<()> {
+    pub async fn handle_connection(self: &Arc<Self>, conn: Connection) -> Result<()> {
         let remote_id = conn.remote_id();
 
         let peer = if let Some(peer) = self.peers.get(&remote_id) {
@@ -440,9 +543,10 @@ impl PeerManager {
 
     /// Wait for an unknown incoming peer to present an enrollment token.
     /// A valid claim pins its key under the token's label and admits it;
-    /// anything else -- no token, bad token, timeout -- closes the
-    /// connection without announcing anything.
-    async fn handle_enrollment(&self, conn: Connection) -> Result<Option<Arc<Peer>>> {
+    /// anything else -- no token, bad token, timeout, or a port collision
+    /// with a live peer -- closes the connection without pinning or
+    /// announcing anything.
+    async fn handle_enrollment(self: &Arc<Self>, conn: Connection) -> Result<Option<Arc<Peer>>> {
         let remote_id = conn.remote_id();
 
         // ExposedPorts can arrive before the Enroll message (separate uni
@@ -475,6 +579,27 @@ impl PeerManager {
             }
         };
 
+        // Refuse before pinning if an announced port is held by a live
+        // peer. (A stale holder is not evicted here; update_peer_ports
+        // below handles it under the bind lock in this same pass.)
+        if let Some(ports) = &early_ports {
+            for &port in ports {
+                if let Some(holder) = self.find_holder(port, &remote_id) {
+                    if Self::probe_peer(&holder).await {
+                        error!(
+                            "rejected incoming peer {}: port {} already held by connected peer {} (\"{}\")",
+                            remote_id,
+                            port,
+                            holder.endpoint_id,
+                            holder.label.as_deref().unwrap_or("-")
+                        );
+                        conn.close(0u32.into(), b"port collision");
+                        return Ok(None);
+                    }
+                }
+            }
+        }
+
         info!("enrolled {} as \"{}\"", remote_id, label);
         self.pins.add(&remote_id.to_string(), &label)?;
 
@@ -483,7 +608,7 @@ impl PeerManager {
         self.spawn_connection_loop(peer.clone());
 
         if let Some(ports) = early_ports {
-            Self::update_peer_ports(&peer, ports).await;
+            self.update_peer_ports(&peer, ports).await;
         }
 
         Ok(Some(peer))

@@ -37,6 +37,14 @@ impl Grants {
         }
     }
 
+    /// Drop every grant naming `peer` (peer evicted)
+    pub fn revoke_grantee(&mut self, peer: &EndpointId) {
+        self.by_port.retain(|_, grantees| {
+            grantees.remove(peer);
+            !grantees.is_empty()
+        });
+    }
+
     /// Is `port` granted to `peer`?
     pub fn allows(&self, port: u16, peer: &EndpointId) -> bool {
         self.by_port
@@ -103,6 +111,21 @@ mod tests {
         assert!(!grants.allows(4001, &a));
         assert_eq!(grants.ports_for(&a), vec![4000]);
         assert!(grants.ports_for(&b).is_empty());
+    }
+
+    #[test]
+    fn revoke_grantee_clears_all_their_grants() {
+        let (a, b) = (key(1), key(2));
+        let mut grants = Grants::default();
+        grants.add(4000, a);
+        grants.add(4001, a);
+        grants.add(4000, b);
+
+        grants.revoke_grantee(&a);
+        assert!(!grants.allows(4000, &a));
+        assert!(!grants.allows(4001, &a));
+        assert!(grants.allows(4000, &b));
+        assert_eq!(grants.ports(), vec![4000]);
     }
 
     #[test]

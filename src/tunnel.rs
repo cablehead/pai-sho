@@ -7,21 +7,26 @@ use tracing::{debug, error, info};
 
 const LOCALHOST: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
 
-/// Bind a local port and forward connections to a peer's port
-pub async fn bind_port<P>(port: u16, peer: &P) -> Result<()>
+/// Bind the local listener for a forwarded port. Kept separate from the
+/// accept loop so a failed bind (port already in use) surfaces to the
+/// caller before any binding is recorded.
+pub async fn bind_listener(port: u16) -> Result<TcpListener> {
+    let addr = SocketAddr::from((LOCALHOST, port));
+    TcpListener::bind(addr)
+        .await
+        .with_context(|| format!("failed to bind {}", addr))
+}
+
+/// Accept loop: forward each connection on `listener` to the peer's port
+pub async fn serve_listener<P>(listener: TcpListener, port: u16, peer: &P) -> Result<()>
 where
     P: PeerConnection + Send + Sync + 'static,
 {
-    let addr = SocketAddr::from((LOCALHOST, port));
-    let listener = TcpListener::bind(addr)
-        .await
-        .with_context(|| format!("failed to bind {}", addr))?;
-
-    info!("listening on {}", addr);
+    info!("listening on 127.0.0.1:{}", port);
 
     loop {
         let (stream, client_addr) = listener.accept().await?;
-        debug!("accepted connection from {} on {}", client_addr, addr);
+        debug!("accepted connection from {} on port {}", client_addr, port);
 
         // Open connection to peer for this port
         match peer.open_tunnel(port).await {
