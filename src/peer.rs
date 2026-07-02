@@ -399,9 +399,9 @@ impl PeerManager {
                     .unwrap_or(false)
             };
             result.push(PeerInfo {
-                endpoint_id: peer.endpoint_id.to_string(),
-                connected,
-                exposed_ports: peer.exposed_ports.read().await.clone(),
+                key: peer.endpoint_id.to_string(),
+                online: connected,
+                they_expose: peer.exposed_ports.read().await.clone(),
             });
         }
         result
@@ -415,6 +415,7 @@ impl PeerManager {
             for binding in peer.bindings.iter() {
                 result.push(BindingInfo {
                     port: *binding.key(),
+                    peer: peer.endpoint_id.to_string(),
                 });
             }
         }

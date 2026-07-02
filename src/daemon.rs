@@ -71,8 +71,9 @@ impl Daemon {
 
     pub async fn list(&self) -> ListInfo {
         ListInfo {
+            me: self.endpoint.id().to_string(),
             peers: self.peers.list().await,
-            exposed_ports: self.get_exposed_ports().await,
+            i_expose: self.get_exposed_ports().await,
             bindings: self.peers.list_bindings().await,
         }
     }

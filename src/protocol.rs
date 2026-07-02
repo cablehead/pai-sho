@@ -31,21 +31,27 @@ pub enum Response {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ListInfo {
+    /// This node's own key (its ticket)
+    pub me: String,
     pub peers: Vec<PeerInfo>,
-    pub exposed_ports: Vec<u16>,
+    /// Ports this node exposes
+    pub i_expose: Vec<u16>,
     pub bindings: Vec<BindingInfo>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PeerInfo {
-    pub endpoint_id: String,
-    pub connected: bool,
-    pub exposed_ports: Vec<u16>,
+    pub key: String,
+    pub online: bool,
+    /// Ports this peer exposes to us
+    pub they_expose: Vec<u16>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BindingInfo {
     pub port: u16,
+    /// Key of the peer this local port tunnels to
+    pub peer: String,
 }
 
 // ============================================================================

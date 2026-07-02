@@ -40,23 +40,7 @@ pub async fn send_command(socket_path: &Path, command: Command) -> Result<()> {
         Response::Ok => println!("OK"),
         Response::Ticket(ticket) => println!("{}", ticket),
         Response::List(info) => {
-            println!("PEERS:");
-            for peer in &info.peers {
-                let status = if peer.connected {
-                    "connected"
-                } else {
-                    "disconnected"
-                };
-                println!(
-                    "  {} ({}) - ports: {:?}",
-                    peer.endpoint_id, status, peer.exposed_ports
-                );
-            }
-            println!("\nEXPOSED: {:?}", info.exposed_ports);
-            println!("\nBINDINGS:");
-            for binding in &info.bindings {
-                println!("  127.0.0.1:{}", binding.port);
-            }
+            println!("{}", serde_json::to_string_pretty(&info)?);
         }
         Response::Error(e) => {
             eprintln!("Error: {}", e);
