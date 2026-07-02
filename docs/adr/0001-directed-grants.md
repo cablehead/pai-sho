@@ -15,10 +15,10 @@ laptop's other ports; and two workloads can never see each other.
 A **grant** is the unit of authorization:
 
 ```
-(owner, port) → grantee
+(owner, port) -> grantee
 ```
 
-Read: *owner* exposes *port* to *grantee*, and to no one else. Default deny — no
+Read: *owner* exposes *port* to *grantee*, and to no one else. Default deny -- no
 grant, no access.
 
 ### Worked example
@@ -34,19 +34,21 @@ Three nodes: your laptop **L** and two workloads **A**, **B**, with keys
 That's four grants:
 
 ```
-(A, 4000) → kL      A's terminal      → laptop
-(A, 3000) → kL      A's web app       → laptop
-(B, 4001) → kL      B's terminal      → laptop
-(L, 7331) → kA      laptop's server   → A only
+(A, 4000) -> kL      A's terminal      -> laptop
+(A, 3000) -> kL      A's web app       -> laptop
+(B, 4001) -> kL      B's terminal      -> laptop
+(L, 7331) -> kA      laptop's server   -> A only
 ```
 
 Which gives exactly:
 
 ```
-            A:4000  A:3000  B:4001  L:7331
-  L (you)     ✓       ✓       ✓       —
-  A           ·       ·       ✗       ✓
-  B           ✗       ✗       ·       ✗
+             A:4000  A:3000  B:4001  L:7331
+  L (you)      y       y       y       -
+  A            -       -       n       y
+  B            n       n       -       n
+
+  y = reachable   n = denied   - = own port (n/a)
 ```
 
 No grant names `kB`, so B reaches nothing but its own ports. A can reach `L:7331`
@@ -56,20 +58,20 @@ other's grants, so they're mutually invisible.
 ## Enforcement
 
 When a peer connects, the owner checks its key against the grants. iroh gives the
-key cryptographically as `conn.remote_id()` — the peer proved it holds the private
+key cryptographically as `conn.remote_id()` -- the peer proved it holds the private
 half, so it can't be faked. Ungranted peer: refuse, announce nothing, forward
 nothing. A tunnel is opened only to a port granted to that specific peer.
 
 The credential is therefore the grantee's **private key**, not a shareable
-address — you can't hand someone access by leaking a string.
+address -- you can't hand someone access by leaking a string.
 
 ## Tradeoffs
 
 - Grants have to be authored. In the laptop-hub case the common ones are set when
-  a workload enrolls; cross-workload exceptions (like `L:7331 → A`) are added by
+  a workload enrolls; cross-workload exceptions (like `L:7331 -> A`) are added by
   hand.
 - A grant is only as trustworthy as knowing the grantee's real key. We take it
   from the connection itself, never from something typed.
 
 Identity persistence and enrollment (how a workload gets `kL` and how the laptop
-learns `kA`) are separate concerns — see forthcoming ADRs.
+learns `kA`) are separate concerns -- see forthcoming ADRs.
