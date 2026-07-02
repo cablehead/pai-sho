@@ -1,5 +1,11 @@
 //! Peer management - connections, port announcements, auto-binding, reconnection.
+//!
+//! Access is default deny: an incoming connection is served only if its key
+//! is already known (added by ticket, or pinned at enrollment) or it presents
+//! a valid enrollment token. Anyone else is refused -- no announcement, no
+//! tunnel.
 
+use crate::enroll::{Pins, Tokens};
 use crate::protocol::{BindingInfo, PeerInfo, PeerMessage, ALPN};
 use crate::tunnel::{self, PeerConnection};
 use anyhow::{anyhow, Context, Result};
@@ -16,10 +22,19 @@ use tracing::{error, info, warn};
 
 const BACKOFF_INITIAL: Duration = Duration::from_secs(1);
 const BACKOFF_MAX: Duration = Duration::from_secs(60);
+/// How long an unknown incoming peer gets to present its enrollment token
+const ENROLL_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Info about a connected peer
 struct Peer {
     endpoint_id: EndpointId,
+    /// Label assigned at enrollment (None for peers added by ticket)
+    label: Option<String>,
+    /// Whether we dial this peer to reconnect. True for peers added by
+    /// ticket; enrolled/pinned peers dial us, so we just wait.
+    dial: bool,
+    /// Token to present on connect (workload side, from --enroll)
+    enroll_token: Option<String>,
     connection: RwLock<Option<Connection>>,
     /// Ports this peer exposes
     exposed_ports: RwLock<Vec<u16>>,
@@ -31,6 +46,28 @@ struct Peer {
     removed: AtomicBool,
 }
 
+impl Peer {
+    fn new(
+        endpoint_id: EndpointId,
+        label: Option<String>,
+        dial: bool,
+        enroll_token: Option<String>,
+        connection: Option<Connection>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            endpoint_id,
+            label,
+            dial,
+            enroll_token,
+            connection: RwLock::new(connection),
+            exposed_ports: RwLock::new(Vec::new()),
+            bindings: DashMap::new(),
+            conn_notify: Notify::new(),
+            removed: AtomicBool::new(false),
+        })
+    }
+}
+
 pub struct PeerManager {
     /// Peers by endpoint ID
     peers: DashMap<EndpointId, Arc<Peer>>,
@@ -40,20 +77,34 @@ pub struct PeerManager {
     exposed_ports: Arc<RwLock<HashSet<u16>>>,
     /// Host address for forwarding tunnel requests
     host: IpAddr,
+    /// Enrollment tokens we minted (operator side)
+    tokens: Arc<Tokens>,
+    /// Peers pinned at enrollment, persisted across restarts
+    pins: Pins,
 }
 
 impl PeerManager {
-    pub fn new(endpoint: Endpoint, host: IpAddr, exposed_ports: Arc<RwLock<HashSet<u16>>>) -> Self {
+    pub fn new(
+        endpoint: Endpoint,
+        host: IpAddr,
+        exposed_ports: Arc<RwLock<HashSet<u16>>>,
+        tokens: Arc<Tokens>,
+        pins: Pins,
+    ) -> Self {
         Self {
             peers: DashMap::new(),
             endpoint,
             host,
             exposed_ports,
+            tokens,
+            pins,
         }
     }
 
-    /// Add a new peer and connect to it
-    pub async fn add_peer(&self, ticket: &str) -> Result<()> {
+    /// Add a new peer and connect to it. If `enroll_token` is set, present
+    /// it on connect and on every reconnect (the peer ignores it once we
+    /// are pinned).
+    pub async fn add_peer(&self, ticket: &str, enroll_token: Option<String>) -> Result<()> {
         let endpoint_id: EndpointId = ticket.parse().context("invalid ticket")?;
 
         // Check if already connected
@@ -70,18 +121,43 @@ impl PeerManager {
 
         info!("connected to {}", endpoint_id);
 
-        let peer = Arc::new(Peer {
-            endpoint_id,
-            connection: RwLock::new(Some(conn)),
-            exposed_ports: RwLock::new(Vec::new()),
-            bindings: DashMap::new(),
-            conn_notify: Notify::new(),
-            removed: AtomicBool::new(false),
-        });
+        let peer = Peer::new(endpoint_id, None, true, enroll_token, Some(conn.clone()));
+
+        if let Some(token) = &peer.enroll_token {
+            let msg = PeerMessage::Enroll {
+                token: token.clone(),
+            };
+            if let Err(e) = Self::send_message(&conn, &msg).await {
+                warn!("failed to send enroll token to {}: {}", endpoint_id, e);
+            }
+        }
 
         self.peers.insert(endpoint_id, peer.clone());
         self.spawn_connection_loop(peer);
 
+        Ok(())
+    }
+
+    /// Register a peer pinned at a previous enrollment (loaded at startup).
+    /// We never dial it -- it phones home.
+    pub fn add_pinned(&self, key: &str, label: &str) -> Result<()> {
+        let endpoint_id: EndpointId = key.parse().context("invalid pinned key")?;
+        if self.peers.contains_key(&endpoint_id) {
+            return Ok(());
+        }
+        let peer = Peer::new(endpoint_id, Some(label.to_string()), false, None, None);
+        self.peers.insert(endpoint_id, peer.clone());
+        self.spawn_connection_loop(peer);
+        info!("loaded pinned peer {} (\"{}\")", endpoint_id, label);
+        Ok(())
+    }
+
+    /// Send a control message on a new uni stream
+    async fn send_message(conn: &Connection, msg: &PeerMessage) -> Result<()> {
+        let data = serde_json::to_vec(msg)?;
+        let mut send = conn.open_uni().await.context("failed to open stream")?;
+        send.write_all(&data).await?;
+        send.finish()?;
         Ok(())
     }
 
@@ -106,15 +182,28 @@ impl PeerManager {
         let mut backoff = BACKOFF_INITIAL;
 
         loop {
-            if let Err(e) = Self::run_connection(&peer, host).await {
-                if peer.removed.load(Ordering::Relaxed) {
-                    return;
+            let has_conn = peer.connection.read().await.is_some();
+            if has_conn {
+                if let Err(e) = Self::run_connection(&peer, host, &exposed_ports).await {
+                    if peer.removed.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    warn!("{} disconnected: {}", peer.endpoint_id, e);
                 }
-                warn!("{} disconnected: {}", peer.endpoint_id, e);
             }
 
             if peer.removed.load(Ordering::Relaxed) {
                 return;
+            }
+
+            if !peer.dial {
+                // This peer phones home; wait for an incoming connection
+                peer.conn_notify.notified().await;
+                if peer.removed.load(Ordering::Relaxed) {
+                    return;
+                }
+                info!("{} reconnected via incoming connection", peer.endpoint_id);
+                continue;
             }
 
             // Reconnect with exponential backoff
@@ -142,7 +231,17 @@ impl PeerManager {
                 match endpoint.connect(peer.endpoint_id, ALPN).await {
                     Ok(conn) => {
                         info!("reconnected to {}", peer.endpoint_id);
-                        *peer.connection.write().await = Some(conn);
+                        *peer.connection.write().await = Some(conn.clone());
+                        // Re-present the enroll token in case the peer never
+                        // processed it (it ignores the message once we are pinned)
+                        if let Some(token) = &peer.enroll_token {
+                            let msg = PeerMessage::Enroll {
+                                token: token.clone(),
+                            };
+                            if let Err(e) = Self::send_message(&conn, &msg).await {
+                                warn!("failed to send enroll token: {}", e);
+                            }
+                        }
                         Self::send_exposed_ports_to_peer(&peer, &exposed_ports).await;
                         backoff = BACKOFF_INITIAL;
                         break;
@@ -158,7 +257,11 @@ impl PeerManager {
 
     /// Unified connection handler: accepts both uni streams (control messages)
     /// and bi streams (tunnel requests) on the current connection.
-    async fn run_connection(peer: &Arc<Peer>, host: IpAddr) -> Result<()> {
+    async fn run_connection(
+        peer: &Arc<Peer>,
+        host: IpAddr,
+        exposed_ports: &Arc<RwLock<HashSet<u16>>>,
+    ) -> Result<()> {
         let conn = {
             let guard = peer.connection.read().await;
             guard.clone().ok_or_else(|| anyhow!("disconnected"))?
@@ -175,8 +278,10 @@ impl PeerManager {
                 }
                 result = conn.accept_bi() => {
                     let (send, recv) = result?;
+                    let peer = peer.clone();
+                    let exposed_ports = exposed_ports.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = Self::handle_bi_stream(host, send, recv).await {
+                        if let Err(e) = Self::handle_bi_stream(host, &exposed_ports, &peer, send, recv).await {
                             error!("tunnel error: {}", e);
                         }
                     });
@@ -208,6 +313,9 @@ impl PeerManager {
             PeerMessage::Connect { port: _ } => {
                 warn!("unexpected Connect message on control stream");
             }
+            PeerMessage::Enroll { .. } => {
+                // Peer is already known; nothing to enroll
+            }
             PeerMessage::Error(e) => {
                 error!("peer error: {}", e);
             }
@@ -216,12 +324,22 @@ impl PeerManager {
 
     async fn handle_bi_stream(
         host: IpAddr,
+        exposed_ports: &Arc<RwLock<HashSet<u16>>>,
+        peer: &Arc<Peer>,
         send: iroh::endpoint::SendStream,
         mut recv: iroh::endpoint::RecvStream,
     ) -> Result<()> {
         let mut buf = [0u8; 2];
         recv.read_exact(&mut buf).await?;
         let port = u16::from_be_bytes(buf);
+        // Only exposed ports are served; anything else is dropped
+        if !exposed_ports.read().await.contains(&port) {
+            warn!(
+                "refused tunnel to unexposed port {} from {}",
+                port, peer.endpoint_id
+            );
+            return Ok(());
+        }
         info!("tunnel request for port {}", port);
         tunnel::handle_tunnel(host, port, send, recv).await
     }
@@ -280,15 +398,20 @@ impl PeerManager {
             entry.value().abort();
         }
 
+        // Drop its pin so it cannot reconnect as a known peer
+        self.pins.remove(ticket)?;
+
         info!("removed peer {}", endpoint_id);
         Ok(())
     }
 
-    /// Handle an incoming connection from a peer
+    /// Handle an incoming connection from a peer. Known peers (added by
+    /// ticket or pinned) are reconnected; unknown peers must enroll with a
+    /// valid token or are refused.
     pub async fn handle_connection(&self, conn: Connection) -> Result<()> {
         let remote_id = conn.remote_id();
 
-        if let Some(peer) = self.peers.get(&remote_id) {
+        let peer = if let Some(peer) = self.peers.get(&remote_id) {
             // Known peer reconnecting -- close old connection, install new one
             let mut conn_guard = peer.connection.write().await;
             if let Some(old_conn) = conn_guard.take() {
@@ -299,42 +422,70 @@ impl PeerManager {
 
             peer.conn_notify.notify_one();
             info!("{} reconnected", remote_id);
+            peer.clone()
         } else {
-            // New incoming peer
-            info!("accepted connection from {}", remote_id);
-
-            let peer = Arc::new(Peer {
-                endpoint_id: remote_id,
-                connection: RwLock::new(Some(conn.clone())),
-                exposed_ports: RwLock::new(Vec::new()),
-                bindings: DashMap::new(),
-                conn_notify: Notify::new(),
-                removed: AtomicBool::new(false),
-            });
-
-            self.peers.insert(remote_id, peer.clone());
-            self.spawn_connection_loop(peer);
-        }
-
-        // Send our exposed ports to this peer
-        let ports: Vec<u16> = self.exposed_ports.read().await.iter().copied().collect();
-        if !ports.is_empty() {
-            let msg = PeerMessage::ExposedPorts(ports);
-            let data = serde_json::to_vec(&msg).unwrap();
-            match conn.open_uni().await {
-                Ok(mut send) => {
-                    if let Err(e) = send.write_all(&data).await {
-                        warn!("failed to send exposed ports to {}: {}", remote_id, e);
-                    }
-                    let _ = send.finish();
-                }
-                Err(e) => {
-                    warn!("failed to open stream to {}: {}", remote_id, e);
-                }
+            // Unknown peer: enroll with a valid token, or nothing
+            match self.handle_enrollment(conn.clone()).await? {
+                Some(peer) => peer,
+                None => return Ok(()),
             }
-        }
+        };
+
+        // Send our exposed ports to this (authorized) peer
+        Self::send_exposed_ports_to_peer(&peer, &self.exposed_ports).await;
 
         Ok(())
+    }
+
+    /// Wait for an unknown incoming peer to present an enrollment token.
+    /// A valid claim pins its key under the token's label and admits it;
+    /// anything else -- no token, bad token, timeout -- closes the
+    /// connection without announcing anything.
+    async fn handle_enrollment(&self, conn: Connection) -> Result<Option<Arc<Peer>>> {
+        let remote_id = conn.remote_id();
+
+        // ExposedPorts can arrive before the Enroll message (separate uni
+        // streams); hold on to it and apply after a successful enrollment.
+        let mut early_ports: Option<Vec<u16>> = None;
+
+        let claim = tokio::time::timeout(ENROLL_TIMEOUT, async {
+            loop {
+                let mut recv = conn.accept_uni().await?;
+                let data = recv.read_to_end(64 * 1024).await?;
+                match serde_json::from_slice::<PeerMessage>(&data) {
+                    Ok(PeerMessage::Enroll { token }) => {
+                        return Ok::<_, anyhow::Error>(self.tokens.claim(&token));
+                    }
+                    Ok(PeerMessage::ExposedPorts(ports)) => {
+                        early_ports = Some(ports);
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await;
+
+        let label = match claim {
+            Ok(Ok(Some(label))) => label,
+            _ => {
+                info!("refused unauthorized peer {}", remote_id);
+                conn.close(0u32.into(), b"not authorized");
+                return Ok(None);
+            }
+        };
+
+        info!("enrolled {} as \"{}\"", remote_id, label);
+        self.pins.add(&remote_id.to_string(), &label)?;
+
+        let peer = Peer::new(remote_id, Some(label), false, None, Some(conn));
+        self.peers.insert(remote_id, peer.clone());
+        self.spawn_connection_loop(peer.clone());
+
+        if let Some(ports) = early_ports {
+            Self::update_peer_ports(&peer, ports).await;
+        }
+
+        Ok(Some(peer))
     }
 
     /// Send our exposed ports to a specific peer
@@ -400,6 +551,7 @@ impl PeerManager {
             };
             result.push(PeerInfo {
                 key: peer.endpoint_id.to_string(),
+                label: peer.label.clone(),
                 online: connected,
                 they_expose: peer.exposed_ports.read().await.clone(),
             });

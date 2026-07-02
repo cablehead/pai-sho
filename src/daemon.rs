@@ -1,5 +1,6 @@
 //! Daemon - manages iroh endpoint, peers, and tunnels.
 
+use crate::enroll::{Pins, Tokens};
 use crate::peer::PeerManager;
 use crate::protocol::{ListInfo, Request, Response, ALPN};
 use anyhow::{anyhow, Context, Result};
@@ -20,6 +21,8 @@ pub struct Daemon {
     exposed_ports: Arc<RwLock<HashSet<u16>>>,
     /// Connected peers
     peers: PeerManager,
+    /// Enrollment tokens minted by grant-token
+    tokens: Arc<Tokens>,
 }
 
 /// Default key location: $XDG_STATE_HOME/pai-sho/key (~/.local/state/pai-sho/key)
@@ -83,12 +86,32 @@ impl Daemon {
             .context("failed to create iroh endpoint")?;
 
         let exposed_ports = Arc::new(RwLock::new(HashSet::new()));
+        let tokens = Arc::new(Tokens::default());
 
-        Ok(Arc::new(Self {
-            peers: PeerManager::new(endpoint.clone(), host, exposed_ports.clone()),
+        // Pins live next to the key: <key>.peers.json
+        let pins = Pins::new(PathBuf::from(format!("{}.peers.json", key_path.display())));
+        let pinned = pins.load()?;
+
+        let daemon = Arc::new(Self {
+            peers: PeerManager::new(
+                endpoint.clone(),
+                host,
+                exposed_ports.clone(),
+                tokens.clone(),
+                pins,
+            ),
             endpoint,
             exposed_ports,
-        }))
+            tokens,
+        });
+
+        for pin in pinned {
+            if let Err(e) = daemon.peers.add_pinned(&pin.key, &pin.label) {
+                error!("failed to load pinned peer {}: {}", pin.key, e);
+            }
+        }
+
+        Ok(daemon)
     }
 
     pub fn ticket(&self) -> String {
@@ -155,7 +178,7 @@ impl Daemon {
     /// Handle a request from the CLI client
     pub async fn handle_request(self: &Arc<Self>, request: Request) -> Response {
         match request {
-            Request::AddPeer { ticket } => match self.peers.add_peer(&ticket).await {
+            Request::AddPeer { ticket } => match self.peers.add_peer(&ticket, None).await {
                 Ok(()) => {
                     // Send our exposed ports to the new peer
                     let ports = self.get_exposed_ports().await;
@@ -178,6 +201,7 @@ impl Daemon {
             },
             Request::List => Response::List(self.list().await),
             Request::Ticket => Response::Ticket(self.ticket()),
+            Request::GrantToken { label } => Response::Token(self.tokens.mint(label)),
         }
     }
 }
@@ -189,6 +213,7 @@ pub async fn run(
     peers: Vec<String>,
     ports: Vec<u16>,
     key_path: Option<PathBuf>,
+    enroll: Option<String>,
 ) -> Result<()> {
     // Clean up old socket
     let _ = std::fs::remove_file(socket_path);
@@ -204,9 +229,9 @@ pub async fn run(
         daemon.expose(port).await?;
     }
 
-    // Add peers specified on command line
+    // Add peers specified on command line, presenting the enroll token if given
     for ticket in &peers {
-        match daemon.peers.add_peer(ticket).await {
+        match daemon.peers.add_peer(ticket, enroll.clone()).await {
             Ok(()) => {
                 info!("added peer {}", ticket);
             }

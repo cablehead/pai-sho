@@ -18,6 +18,7 @@ pub enum Request {
     Unexpose { port: u16 },
     List,
     Ticket,
+    GrantToken { label: String },
 }
 
 /// Response from daemon to CLI client
@@ -26,6 +27,7 @@ pub enum Response {
     Ok,
     Ticket(String),
     List(ListInfo),
+    Token(String),
     Error(String),
 }
 
@@ -42,6 +44,8 @@ pub struct ListInfo {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PeerInfo {
     pub key: String,
+    /// Label assigned at enrollment (absent for peers added by ticket)
+    pub label: Option<String>,
     pub online: bool,
     /// Ports this peer exposes to us
     pub they_expose: Vec<u16>,
@@ -65,6 +69,8 @@ pub enum PeerMessage {
     ExposedPorts(Vec<u16>),
     /// Request to connect to a specific port
     Connect { port: u16 },
+    /// Present a one-time enrollment token (sent on connect by `--enroll`)
+    Enroll { token: String },
     /// Error response
     Error(String),
 }

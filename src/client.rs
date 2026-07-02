@@ -15,6 +15,7 @@ pub async fn send_command(socket_path: &Path, command: Command) -> Result<()> {
         Command::Unexpose { port } => Request::Unexpose { port },
         Command::List => Request::List,
         Command::Ticket => Request::Ticket,
+        Command::GrantToken { label } => Request::GrantToken { label },
         Command::Daemon { .. } => unreachable!("daemon handled separately"),
     };
 
@@ -39,6 +40,7 @@ pub async fn send_command(socket_path: &Path, command: Command) -> Result<()> {
     match response {
         Response::Ok => println!("OK"),
         Response::Ticket(ticket) => println!("{}", ticket),
+        Response::Token(token) => println!("{}", token),
         Response::List(info) => {
             println!("{}", serde_json::to_string_pretty(&info)?);
         }

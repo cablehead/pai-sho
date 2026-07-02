@@ -4,6 +4,7 @@ use std::net::IpAddr;
 
 mod client;
 mod daemon;
+mod enroll;
 mod peer;
 mod protocol;
 mod tunnel;
@@ -33,13 +34,16 @@ pub enum Command {
         /// Add peer(s) on startup
         #[arg(short = 'a', long = "add")]
         peers: Vec<String>,
-        /// Expose port(s) on startup
-        #[arg(short = 'e', long = "expose")]
+        /// Expose port(s) on startup (repeat or comma-separate)
+        #[arg(short = 'e', long = "expose", value_delimiter = ',')]
         ports: Vec<u16>,
         /// Path to the daemon's secret key (created if missing).
         /// Defaults to $XDG_STATE_HOME/pai-sho/key (~/.local/state/pai-sho/key)
         #[arg(long = "key")]
         key_path: Option<std::path::PathBuf>,
+        /// One-time enrollment token to present to added peers
+        #[arg(long)]
+        enroll: Option<String>,
     },
 
     /// Add a peer (returns assigned IP)
@@ -65,6 +69,13 @@ pub enum Command {
 
     /// Print daemon's ticket
     Ticket,
+
+    /// Mint a one-time enrollment token (valid 5 minutes)
+    GrantToken {
+        /// Label to pin the enrolling peer under
+        #[arg(long)]
+        label: String,
+    },
 }
 
 #[tokio::main]
@@ -86,8 +97,9 @@ async fn main() -> Result<()> {
             peers,
             ports,
             key_path,
+            enroll,
         } => {
-            daemon::run(host, socket_path, peers, ports, key_path).await?;
+            daemon::run(host, socket_path, peers, ports, key_path, enroll).await?;
         }
         _ => {
             client::send_command(socket_path, cli.command).await?;
