@@ -2,11 +2,11 @@
 
 use crate::peer::PeerManager;
 use crate::protocol::{ListInfo, Request, Response, ALPN};
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use iroh::{Endpoint, SecretKey};
 use std::collections::HashSet;
 use std::net::IpAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
@@ -22,9 +22,58 @@ pub struct Daemon {
     peers: PeerManager,
 }
 
+/// Default key location: $XDG_STATE_HOME/pai-sho/key (~/.local/state/pai-sho/key)
+fn default_key_path() -> PathBuf {
+    let base = std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local").join("state"))
+        })
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.join("pai-sho").join("key")
+}
+
+/// Load the secret key from `path`, or generate one and persist it there.
+/// The key file is 32 raw bytes, created with mode 0600.
+fn load_or_create_key(path: &Path) -> Result<SecretKey> {
+    if path.exists() {
+        let bytes = std::fs::read(path)
+            .with_context(|| format!("failed to read key file {}", path.display()))?;
+        let bytes: [u8; 32] = bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow!("key file {} is not 32 bytes", path.display()))?;
+        return Ok(SecretKey::from_bytes(&bytes));
+    }
+
+    let key = SecretKey::generate(&mut rand::rng());
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    use std::io::Write;
+    let mut file = opts
+        .open(path)
+        .with_context(|| format!("failed to create key file {}", path.display()))?;
+    file.write_all(&key.to_bytes())
+        .with_context(|| format!("failed to write key file {}", path.display()))?;
+
+    info!("generated new key at {}", path.display());
+    Ok(key)
+}
+
 impl Daemon {
-    pub async fn new(host: IpAddr) -> Result<Arc<Self>> {
-        let secret_key = SecretKey::generate(&mut rand::rng());
+    pub async fn new(host: IpAddr, key_path: &Path) -> Result<Arc<Self>> {
+        let secret_key = load_or_create_key(key_path)?;
 
         let endpoint = Endpoint::builder(iroh::endpoint::presets::N0)
             .secret_key(secret_key)
@@ -139,14 +188,16 @@ pub async fn run(
     socket_path: &Path,
     peers: Vec<String>,
     ports: Vec<u16>,
+    key_path: Option<PathBuf>,
 ) -> Result<()> {
     // Clean up old socket
     let _ = std::fs::remove_file(socket_path);
 
-    let daemon = Daemon::new(host).await?;
+    let key_path = key_path.unwrap_or_else(default_key_path);
+    let daemon = Daemon::new(host, &key_path).await?;
 
     println!("Ticket: {}", daemon.ticket());
-    info!("daemon started, host={}", host);
+    info!("daemon started, host={}, key={}", host, key_path.display());
 
     // Expose ports specified on command line
     for port in ports {
@@ -208,4 +259,40 @@ async fn handle_client(stream: UnixStream, daemon: Arc<Daemon>) -> Result<()> {
     writer.write_all(b"\n").await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn key_persists_across_loads() {
+        let dir = std::env::temp_dir().join(format!("pai-sho-key-test-{}", std::process::id()));
+        let path = dir.join("key");
+
+        let first = load_or_create_key(&path).unwrap();
+        let second = load_or_create_key(&path).unwrap();
+        assert_eq!(first.to_bytes(), second.to_bytes());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn rejects_malformed_key_file() {
+        let dir = std::env::temp_dir().join(format!("pai-sho-badkey-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("key");
+        std::fs::write(&path, b"too short").unwrap();
+
+        assert!(load_or_create_key(&path).is_err());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

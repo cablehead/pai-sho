@@ -36,6 +36,10 @@ pub enum Command {
         /// Expose port(s) on startup
         #[arg(short = 'e', long = "expose")]
         ports: Vec<u16>,
+        /// Path to the daemon's secret key (created if missing).
+        /// Defaults to $XDG_STATE_HOME/pai-sho/key (~/.local/state/pai-sho/key)
+        #[arg(long = "key")]
+        key_path: Option<std::path::PathBuf>,
     },
 
     /// Add a peer (returns assigned IP)
@@ -77,8 +81,13 @@ async fn main() -> Result<()> {
     let socket_path = std::path::Path::new(&cli.socket);
 
     match cli.command {
-        Command::Daemon { host, peers, ports } => {
-            daemon::run(host, socket_path, peers, ports).await?;
+        Command::Daemon {
+            host,
+            peers,
+            ports,
+            key_path,
+        } => {
+            daemon::run(host, socket_path, peers, ports, key_path).await?;
         }
         _ => {
             client::send_command(socket_path, cli.command).await?;
