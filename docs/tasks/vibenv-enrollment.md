@@ -57,3 +57,23 @@ JSON with the current field names.
 - Commit per stable change (`cargo check` passing), push to `adr/authorized-mesh`.
 - No `Co-Authored-By` trailer — the repo's `.claude/settings.json` handles it.
 - Docs reader-first, example-led, no wall of words.
+
+## Status: shipped, verified end-to-end (2026-07-02)
+
+All four "done when" points hold, tested on real hardware (Hetzner host + a
+dedicated operator pai-sho daemon on the laptop, its own socket + key so it
+never touches an unrelated personal daemon):
+
+- Rebuilt the guest-side pai-sho binary from this branch, baked it into
+  `vibenv-base.img`.
+- `init2` dials home (`-a $OPERATOR_TICKET --enroll $ENROLL_TOKEN`) and persists
+  its own key to `/session/vibenv/pai-sho.key`.
+- `ch-launch [slug] [toolchain] [token]` seeds both into the session env.
+- `vibenv-launch.sh` (new, laptop repo) mints the token, calls `ch-launch` over
+  SSH, polls until enrolled — the actual entry point now.
+- Test: `./vibenv-launch.sh phonehome-test rust` → vibenv booted, dialed home,
+  showed up in the operator's `list` under its label, port auto-bound, confirmed
+  live via a real HTTP request. Zero manual `add-peer` / ticket copying.
+
+Contract held exactly as written — no changes needed on the pai-sho side to
+consume it. Full build/verification log: `vibenv-layers.md` in the infra repo.
