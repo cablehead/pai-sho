@@ -12,13 +12,27 @@ pub const ALPN: &[u8] = b"PAI_SHO/1";
 /// Request from CLI client to daemon
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Request {
-    AddPeer { ticket: String },
-    RemovePeer { ticket: String },
-    Expose { port: u16 },
-    Unexpose { port: u16 },
+    AddPeer {
+        ticket: String,
+    },
+    RemovePeer {
+        ticket: String,
+    },
+    /// Grant `port` to `to`; empty `to` grants to all currently known peers
+    Expose {
+        port: u16,
+        to: Vec<String>,
+    },
+    /// Revoke grants for `port`; `to` limits it to one grantee
+    Unexpose {
+        port: u16,
+        to: Option<String>,
+    },
     List,
     Ticket,
-    GrantToken { label: String },
+    GrantToken {
+        label: String,
+    },
 }
 
 /// Response from daemon to CLI client
@@ -36,9 +50,18 @@ pub struct ListInfo {
     /// This node's own key (its ticket)
     pub me: String,
     pub peers: Vec<PeerInfo>,
-    /// Ports this node exposes
+    /// Ports this node exposes (distinct granted ports)
     pub i_expose: Vec<u16>,
+    /// Who each port is granted to, one row per (port, grantee)
+    pub grants: Vec<GrantInfo>,
     pub bindings: Vec<BindingInfo>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GrantInfo {
+    pub port: u16,
+    /// Key of the peer this port is granted to
+    pub to: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

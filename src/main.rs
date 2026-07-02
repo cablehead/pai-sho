@@ -5,6 +5,7 @@ use std::net::IpAddr;
 mod client;
 mod daemon;
 mod enroll;
+mod grants;
 mod peer;
 mod protocol;
 mod tunnel;
@@ -58,11 +59,21 @@ pub enum Command {
         ticket: String,
     },
 
-    /// Expose a port to peers
-    Expose { port: u16 },
+    /// Expose a port to specific peers (a directed grant)
+    Expose {
+        port: u16,
+        /// Peer key(s) to grant the port to; defaults to all known peers
+        #[arg(long = "to")]
+        to: Vec<String>,
+    },
 
-    /// Stop exposing a port
-    Unexpose { port: u16 },
+    /// Revoke grants for a port
+    Unexpose {
+        port: u16,
+        /// Revoke only this peer's grant; defaults to every grant for the port
+        #[arg(long = "to")]
+        to: Option<String>,
+    },
 
     /// List peers, exposed ports, and bindings
     List,

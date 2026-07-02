@@ -6,13 +6,14 @@
 //! tunnel.
 
 use crate::enroll::{Pins, Tokens};
+use crate::grants::Grants;
 use crate::protocol::{BindingInfo, PeerInfo, PeerMessage, ALPN};
 use crate::tunnel::{self, PeerConnection};
 use anyhow::{anyhow, Context, Result};
 use dashmap::DashMap;
 use iroh::endpoint::Connection;
 use iroh::{Endpoint, EndpointId};
-use std::collections::HashSet;
+
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -73,8 +74,8 @@ pub struct PeerManager {
     peers: DashMap<EndpointId, Arc<Peer>>,
     /// Our endpoint (for outbound reconnection)
     endpoint: Endpoint,
-    /// Shared exposed ports (for re-announcing after reconnect)
-    exposed_ports: Arc<RwLock<HashSet<u16>>>,
+    /// Directed grants: which port is exposed to which peer
+    grants: Arc<RwLock<Grants>>,
     /// Host address for forwarding tunnel requests
     host: IpAddr,
     /// Enrollment tokens we minted (operator side)
@@ -87,7 +88,7 @@ impl PeerManager {
     pub fn new(
         endpoint: Endpoint,
         host: IpAddr,
-        exposed_ports: Arc<RwLock<HashSet<u16>>>,
+        grants: Arc<RwLock<Grants>>,
         tokens: Arc<Tokens>,
         pins: Pins,
     ) -> Self {
@@ -95,7 +96,7 @@ impl PeerManager {
             peers: DashMap::new(),
             endpoint,
             host,
-            exposed_ports,
+            grants,
             tokens,
             pins,
         }
@@ -165,9 +166,9 @@ impl PeerManager {
     fn spawn_connection_loop(&self, peer: Arc<Peer>) {
         let endpoint = self.endpoint.clone();
         let host = self.host;
-        let exposed_ports = self.exposed_ports.clone();
+        let grants = self.grants.clone();
         tokio::spawn(async move {
-            Self::peer_connection_loop(endpoint, peer, host, exposed_ports).await;
+            Self::peer_connection_loop(endpoint, peer, host, grants).await;
         });
     }
 
@@ -177,14 +178,14 @@ impl PeerManager {
         endpoint: Endpoint,
         peer: Arc<Peer>,
         host: IpAddr,
-        exposed_ports: Arc<RwLock<HashSet<u16>>>,
+        grants: Arc<RwLock<Grants>>,
     ) {
         let mut backoff = BACKOFF_INITIAL;
 
         loop {
             let has_conn = peer.connection.read().await.is_some();
             if has_conn {
-                if let Err(e) = Self::run_connection(&peer, host, &exposed_ports).await {
+                if let Err(e) = Self::run_connection(&peer, host, &grants).await {
                     if peer.removed.load(Ordering::Relaxed) {
                         return;
                     }
@@ -242,7 +243,7 @@ impl PeerManager {
                                 warn!("failed to send enroll token: {}", e);
                             }
                         }
-                        Self::send_exposed_ports_to_peer(&peer, &exposed_ports).await;
+                        Self::send_exposed_ports_to_peer(&peer, &grants).await;
                         backoff = BACKOFF_INITIAL;
                         break;
                     }
@@ -260,7 +261,7 @@ impl PeerManager {
     async fn run_connection(
         peer: &Arc<Peer>,
         host: IpAddr,
-        exposed_ports: &Arc<RwLock<HashSet<u16>>>,
+        grants: &Arc<RwLock<Grants>>,
     ) -> Result<()> {
         let conn = {
             let guard = peer.connection.read().await;
@@ -279,9 +280,9 @@ impl PeerManager {
                 result = conn.accept_bi() => {
                     let (send, recv) = result?;
                     let peer = peer.clone();
-                    let exposed_ports = exposed_ports.clone();
+                    let grants = grants.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = Self::handle_bi_stream(host, &exposed_ports, &peer, send, recv).await {
+                        if let Err(e) = Self::handle_bi_stream(host, &grants, &peer, send, recv).await {
                             error!("tunnel error: {}", e);
                         }
                     });
@@ -324,7 +325,7 @@ impl PeerManager {
 
     async fn handle_bi_stream(
         host: IpAddr,
-        exposed_ports: &Arc<RwLock<HashSet<u16>>>,
+        grants: &Arc<RwLock<Grants>>,
         peer: &Arc<Peer>,
         send: iroh::endpoint::SendStream,
         mut recv: iroh::endpoint::RecvStream,
@@ -332,10 +333,10 @@ impl PeerManager {
         let mut buf = [0u8; 2];
         recv.read_exact(&mut buf).await?;
         let port = u16::from_be_bytes(buf);
-        // Only exposed ports are served; anything else is dropped
-        if !exposed_ports.read().await.contains(&port) {
+        // A tunnel is served only for a port granted to this specific peer
+        if !grants.read().await.allows(port, &peer.endpoint_id) {
             warn!(
-                "refused tunnel to unexposed port {} from {}",
+                "refused tunnel to ungranted port {} from {}",
                 port, peer.endpoint_id
             );
             return Ok(());
@@ -432,7 +433,7 @@ impl PeerManager {
         };
 
         // Send our exposed ports to this (authorized) peer
-        Self::send_exposed_ports_to_peer(&peer, &self.exposed_ports).await;
+        Self::send_exposed_ports_to_peer(&peer, &self.grants).await;
 
         Ok(())
     }
@@ -488,54 +489,30 @@ impl PeerManager {
         Ok(Some(peer))
     }
 
-    /// Send our exposed ports to a specific peer
-    async fn send_exposed_ports_to_peer(peer: &Peer, exposed_ports: &Arc<RwLock<HashSet<u16>>>) {
-        let ports: Vec<u16> = exposed_ports.read().await.iter().copied().collect();
-        if ports.is_empty() {
-            return;
-        }
-
+    /// Announce to a peer the ports granted to it. Always sent, even when
+    /// empty, so a revocation tears down the peer's binding.
+    async fn send_exposed_ports_to_peer(peer: &Peer, grants: &Arc<RwLock<Grants>>) {
+        let ports = grants.read().await.ports_for(&peer.endpoint_id);
         let msg = PeerMessage::ExposedPorts(ports);
-        let data = serde_json::to_vec(&msg).unwrap();
 
         let conn = peer.connection.read().await;
         if let Some(conn) = conn.as_ref() {
-            match conn.open_uni().await {
-                Ok(mut send) => {
-                    if let Err(e) = send.write_all(&data).await {
-                        warn!("failed to send ports to {}: {}", peer.endpoint_id, e);
-                    }
-                    let _ = send.finish();
-                }
-                Err(e) => {
-                    warn!("failed to open stream to {}: {}", peer.endpoint_id, e);
-                }
+            if let Err(e) = Self::send_message(conn, &msg).await {
+                warn!("failed to send ports to {}: {}", peer.endpoint_id, e);
             }
         }
     }
 
-    /// Broadcast our exposed ports to all connected peers
-    pub async fn broadcast_exposed_ports(&self, ports: Vec<u16>) {
-        let msg = PeerMessage::ExposedPorts(ports);
-        let data = serde_json::to_vec(&msg).unwrap();
-
+    /// Re-announce grants to every connected peer (each gets its own view)
+    pub async fn broadcast_grants(&self) {
         for entry in self.peers.iter() {
-            let peer = entry.value();
-            let conn = peer.connection.read().await;
-            if let Some(conn) = conn.as_ref() {
-                match conn.open_uni().await {
-                    Ok(mut send) => {
-                        if let Err(e) = send.write_all(&data).await {
-                            warn!("failed to send to {}: {}", peer.endpoint_id, e);
-                        }
-                        let _ = send.finish();
-                    }
-                    Err(e) => {
-                        warn!("failed to open stream to {}: {}", peer.endpoint_id, e);
-                    }
-                }
-            }
+            Self::send_exposed_ports_to_peer(entry.value(), &self.grants).await;
         }
+    }
+
+    /// Keys of all currently known peers
+    pub fn peer_ids(&self) -> Vec<EndpointId> {
+        self.peers.iter().map(|e| *e.key()).collect()
     }
 
     /// List all peers
