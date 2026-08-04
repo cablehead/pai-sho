@@ -1,6 +1,6 @@
 [package]
 name = "pai-sho"
-version = "0.3.0"
+version = "0.3.1-dev"
 edition = "2021"
 description = "Encrypted peer-to-peer port forwarding for machines with no open ports. Default deny -- every port granted to exactly the peer you choose."
 license = "MIT"
