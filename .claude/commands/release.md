@@ -1,7 +1,7 @@
 ---
 allowed-tools: Bash, Edit, Read, Glob
-argument-hint: [version] (e.g., 0.1.0)
-description: Automated release process - version bump, tag, publish binaries
+argument-hint: [version] (e.g., 0.4.0)
+description: Automated release process - version bump, tag, publish binaries and crate
 ---
 
 # Automated Release Process
@@ -16,41 +16,58 @@ Current branch: !`git branch --show-current`
 
 Last few releases: !`git tag --sort=-version:refname | head -5`
 
+Current version: !`grep '^version' Cargo.toml | head -1`
+
 ## Release Steps
 
-### 1. Pre-Release Confirmation
+### 1. Pre-Release Information Gathering
 
-**Ask the user to confirm the version number:** $ARGUMENTS
+**Ask the user for the following BEFORE starting anything else:**
+
+- Confirm the version number: $ARGUMENTS
+- Crates.io credentials, unless already present. Verify with
+  `cargo publish --dry-run` reaching the "aborting upload due to dry run"
+  stage without a token error; if missing, have the user run `cargo login`
+  (via `! cargo login` in the session) or provide a token for
+  `CARGO_REGISTRY_TOKEN`. Collecting this now means the release cannot
+  strand at the publish step hours later.
 
 ### 2. Version Management
 
 - Update version in Cargo.toml to $ARGUMENTS
 - Run `cargo check` to update Cargo.lock
-- Generate changelog from commits since last stable release:
-  ```bash
-  # Get the previous tag
-  previous_tag=$(git tag --list 'v*' --sort=-version:refname | head -1)
-  
-  # Generate changelog
-  if [ -n "$previous_tag" ]; then
-    git log --format="- %s" "${previous_tag}..HEAD" > changes/v$ARGUMENTS.md
-  else
-    git log --format="- %s" HEAD > changes/v$ARGUMENTS.md
-  fi
-  ```
 
-### 3. Review Release Notes
+### 3. Generate Changelog
 
-**WARNING: REVIEW REQUIRED**: The release notes have been generated in
-`changes/v$ARGUMENTS.md`. Please review them carefully:
+Get commits since last stable release:
+
+```bash
+last_tag=$(git tag --list 'v*' --sort=-version:refname | head -1)
+git log --oneline --pretty=format:"* %s (%ad)" --date=short ${last_tag}..HEAD
+```
+
+Create `changes/v$ARGUMENTS.md` with:
+
+- `# v$ARGUMENTS` header
+- `## Highlights` section with notable user-facing changes
+- `## Raw commits` section with the commit list
+- **No soft line breaks** -- paragraphs should be single long lines, not
+  wrapped at 80 columns. GitHub renders markdown with soft wraps, so hard
+  breaks mid-paragraph show up as unwanted newlines in the release notes.
+
+### 4. Review Release Notes
+
+**WARNING: REVIEW REQUIRED**: Show the changelog for user approval before
+proceeding:
 
 - Check that all important changes are highlighted appropriately
 - Edit the highlights section to focus on user-facing improvements
 - Ensure the changelog is accurate and complete
 
-**Do not proceed to the next step until you are satisfied with the release notes.**
+**Do not proceed to the next step until the user is satisfied with the
+release notes.**
 
-### 4. Git Operations
+### 5. Git Operations
 
 - Commit changes with message: `chore: release v$ARGUMENTS`
 - Create and push git tag `v$ARGUMENTS`:
@@ -61,17 +78,13 @@ Last few releases: !`git tag --sort=-version:refname | head -5`
   ```
 - This triggers GitHub workflow to build cross-platform binaries
 
-### 5. Watch CI Workflow
+### 6. Watch CI Workflow
 
 - Get the latest workflow run ID: `gh run list --limit 1`
 - Monitor build with: `gh run watch <run-id> --exit-status`
 - Wait for all three builds to complete (linux-amd64, linux-arm64, macos-arm64)
-- Output the watch command for the user:
-  ```
-  gh run watch <run-id> --exit-status
-  ```
 
-### 6. Verify Release Artifacts
+### 7. Verify Release Artifacts
 
 - Verify GitHub release: `gh release view v$ARGUMENTS`
 - Ensure all artifacts are uploaded:
@@ -84,12 +97,11 @@ Last few releases: !`git tag --sort=-version:refname | head -5`
   gh release edit v$ARGUMENTS --notes-file changes/v$ARGUMENTS.md
   ```
 
-### 7. Test Installation
+### 8. Test Installation
 
 **Verify eget installation works:**
 
 ```bash
-# Test that eget can install pai-sho
 eget cablehead/pai-sho --tag v$ARGUMENTS
 ```
 
@@ -97,19 +109,25 @@ If eget fails, check:
 - Artifact naming matches eget conventions
 - Tarball structure is correct (binary in top-level directory)
 
-### 8. Homebrew Formula Update
+### 9. Homebrew Formula Update
 
-- Clone `../homebrew-tap` if not present: `git clone https://github.com/cablehead/homebrew-tap.git`
-- Download macOS tarball and calculate SHA256:
+- Clone `../homebrew-tap` if not present:
+  `git clone https://github.com/cablehead/homebrew-tap.git`
+- **Pull latest** before making changes: `cd ../homebrew-tap && git pull`
+- **Wait 10+ seconds** after build completes for GitHub CDN propagation
+- Download macOS tarball, verify integrity, and calculate SHA256:
   ```bash
   cd /tmp
+  rm -f pai-sho-v$ARGUMENTS-macos-arm64.tar.gz
   curl -sL https://github.com/cablehead/pai-sho/releases/download/v$ARGUMENTS/pai-sho-v$ARGUMENTS-macos-arm64.tar.gz -o pai-sho-v$ARGUMENTS-macos-arm64.tar.gz
+  tar -tzf pai-sho-v$ARGUMENTS-macos-arm64.tar.gz  # verify before hashing
   sha256sum pai-sho-v$ARGUMENTS-macos-arm64.tar.gz
   ```
-- Update `../homebrew-tap/Formula/pai-sho.rb` with new version, URL, and SHA256 checksum
+- Update `../homebrew-tap/Formula/pai-sho.rb` with new version, URL, and
+  SHA256 checksum
 - Commit and push homebrew formula changes
 
-### 9. Manual Verification Required
+### 10. Manual Verification Required
 
 **WARNING: CRITICAL: macOS Verification BEFORE Publishing to Crates.io**
 
@@ -123,23 +141,29 @@ pai-sho --version  # should show $ARGUMENTS
 
 **STOP HERE if verification fails.** Publishing to crates.io is irreversible.
 
-### 10. Cargo Registry Publication
+### 11. Cargo Registry Publication
 
 **Only proceed after macOS verification passes.**
 
-**WARNING: PAUSE HERE to collect the Cargo registry token from the user.**
+Using the token collected in step 1:
 
-Ask the user to paste their token by setting the environment variable:
-```
-$env.CARGO_REGISTRY_TOKEN = "<their-token>"
-```
-
-Wait for them to confirm they've set it, then run:
 ```bash
-CARGO_REGISTRY_TOKEN="$env.CARGO_REGISTRY_TOKEN" cargo publish
+cargo publish
 ```
 
 **Warning**: This step cannot be undone - you cannot unpublish from crates.io
+
+### 12. Bump to Dev Version
+
+After publishing, bump Cargo.toml to the next patch dev version
+(e.g., `0.4.0` -> `0.4.1-dev`), run `cargo check` to update Cargo.lock,
+and commit:
+
+```bash
+git add Cargo.toml Cargo.lock
+git commit -m "chore: bump to v<next>-dev"
+git push
+```
 
 ## Release Complete
 
@@ -166,8 +190,8 @@ If verification fails **before cargo publish**:
 4. Revert version changes in Cargo.toml
 5. Investigate and fix issues before retry
 
-**Note**: If cargo publish has already completed, you cannot unpublish from crates.io.
-You would need to publish a new patch version with the fix instead.
+**Note**: If cargo publish has already completed, you cannot unpublish from
+crates.io. You would need to publish a new patch version with the fix instead.
 
 ---
 

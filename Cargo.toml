@@ -2,7 +2,7 @@
 name = "pai-sho"
 version = "0.3.0"
 edition = "2021"
-description = "What happens when you want dumbpipe to stay running, handle a few ports at once, and reconnect when your laptop wakes up"
+description = "Encrypted peer-to-peer port forwarding for machines with no open ports. Default deny -- every port granted to exactly the peer you choose."
 license = "MIT"
 repository = "https://github.com/cablehead/pai-sho"
 
