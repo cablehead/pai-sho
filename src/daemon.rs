@@ -265,6 +265,7 @@ impl Daemon {
 }
 
 /// Run the daemon
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     host: IpAddr,
     socket_path: &Path,
@@ -272,6 +273,7 @@ pub async fn run(
     ports: Vec<u16>,
     key_path: Option<PathBuf>,
     enroll: Option<String>,
+    resolver: Option<std::net::SocketAddr>,
 ) -> Result<()> {
     // Clean up old socket
     let _ = std::fs::remove_file(socket_path);
@@ -281,6 +283,16 @@ pub async fn run(
 
     println!("Ticket: {}", daemon.ticket());
     info!("daemon started, host={}, key={}", host, key_path.display());
+
+    // Serve the owned resolver, if requested.
+    if let Some(listen) = resolver {
+        let peers = daemon.peers.clone();
+        tokio::spawn(async move {
+            if let Err(e) = crate::resolver::run(listen, peers).await {
+                error!("resolver stopped: {}", e);
+            }
+        });
+    }
 
     // -e ports are granted to the -a peers: expose these ports to those
     // peers, and to no one else

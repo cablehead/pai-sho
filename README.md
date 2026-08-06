@@ -60,16 +60,19 @@ The VM enrolls under the label `vm`, and only my laptop can reach it; anyone els
 who dials the VM is refused. Close the laptop, reopen it, and the connection
 restores on its own, no new token needed.
 
-Its ports are not on `localhost` yet. I **project** the VM's surface to give it a
-local address and a name, then its ports are reachable under that name:
+The VM is **auto-projected** on enrollment: it gets its own local address, and its
+ports bind there under the name it enrolled with. With the daemon serving its
+resolver (`--resolver 127.0.0.1:5353`) and the OS pointed at it for `.ps`, both
+ports answer by name:
 
 ```sh
-pai-sho project vm --as vm
-# 3001 and 7331 now answer at vm:3001 and vm:7331
+# vm.ps:3001 and vm.ps:7331 are reachable, no manual step
 ```
 
-Every port the VM exposes binds under one address, so a second projected peer's
-`:3001` never collides with this one. Take it down with `pai-sho unproject vm`.
+Every port a VM exposes binds under that one address, so a second VM's `:3001`
+never collides with this one, and every VM can use the same port for the same job.
+`project` is the override when you want to pin an address or rename; `unproject`
+takes a surface down.
 
 Spin up something new on the VM and expose it live:
 
@@ -79,7 +82,7 @@ pai-sho expose 3002
 ```
 
 Because `vm` is already projected, `3002` binds under it too, immediately at
-`http://vm:3002` in my browser. Done with it? `pai-sho unexpose 3002`.
+`http://vm.ps:3002` in my browser. Done with it? `pai-sho unexpose 3002`.
 
 ## Install
 
@@ -130,6 +133,7 @@ list                       Show peers, grants, and bindings (JSON)
 | `--enroll` | | One-time token to present to the `-a` peers |
 | `--key` | `~/.local/state/pai-sho/key` | Secret key path (created if missing) |
 | `--socket` | `/tmp/pai-sho.sock` | Unix socket path |
+| `--resolver` | | Serve the owned `*.ps` resolver on this UDP address (e.g. `127.0.0.1:5353`) |
 
 ## How it works
 
@@ -148,17 +152,24 @@ presents a one-time token minted by `grant-token`. A valid claim pins the peer's
 under the token's label and is then spent; pins persist across restarts, so a reboot
 does not orphan enrolled workloads ([ADR 0002](docs/adr/0002-token-enrollment.md)).
 
-**Forwarding.** Each peer is announced only the ports granted to it. A granted
-port is not reachable until you **project** the peer, which binds its ports at a
-dedicated local address. Traffic then runs over the encrypted QUIC connection. It
-works both ways -- something running locally on `:4001` becomes reachable on the
-peer with `pai-sho expose 4001`.
+**Forwarding.** Each peer is announced only the ports granted to it. When a peer
+announces a granted port it is auto-projected: it gets a local address and its
+ports bind there, reachable without a manual step. Traffic runs over the encrypted
+QUIC connection. It works both ways -- something running locally on `:4001` becomes
+reachable on the peer with `pai-sho expose 4001`.
 
-**Surfaces.** A peer's ports are addressed as a unit at one local IP. `project`
-turns that on (an address chosen with `--ip` or allocated from `127.0.1.0/24`, and
-an optional `/etc/hosts` name with `--as`); `unproject` turns it off. Because each
-peer owns its address, two peers can expose the same port without colliding.
-Projections persist across a restart ([ADR 0004](docs/adr/0004-peer-surfaces.md)).
+**Surfaces.** A peer's ports are addressed as a unit at one local IP, named after
+its enrollment label. Because each peer owns its address, two peers can expose the
+same port without colliding, so every peer can use the same port for the same job.
+`project` overrides the auto-assignment (pin an address with `--ip`, rename with
+`--as`), `unproject` takes a surface down, and projections persist across a restart
+([ADR 0004](docs/adr/0004-peer-surfaces.md)).
+
+**Resolver.** With `--resolver`, the daemon answers `<name>.ps` from the live
+surface table, so `vibenv-ndyg.ps` reaches that peer's ports. It is authoritative
+for one suffix and never touches the system resolver; you point the OS at it for
+`.ps` only (`/etc/resolver/ps` on macOS, a dnsmasq `server=/ps/...` forward on
+Linux). See [ADR 0005](docs/adr/0005-auto-project-and-owned-resolver.md).
 
 **Reconnection.** If the connection drops, both sides reconnect with exponential
 backoff. Projected surfaces stay in place and rebind when the link comes back.

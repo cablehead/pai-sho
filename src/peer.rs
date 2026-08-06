@@ -382,20 +382,61 @@ impl PeerManager {
             }
         }
 
-        // Bind newly announced ports, but only if the peer is projected. A
-        // port with no binding is retried on every announce, so projecting a
-        // peer later picks up whatever it has already announced.
-        let ip = peer.surface.read().await.as_ref().map(|s| s.ip);
-        if let Some(ip) = ip {
-            for &port in &new_ports {
-                if peer.bindings.contains_key(&port) {
-                    continue;
-                }
-                Self::bind_one(peer, ip, port).await;
+        // Bind newly announced ports. A peer with no surface is auto-projected
+        // on its first announced port: allocate an address, name it after the
+        // peer's label, and bind there. This is the default path, so reach is
+        // automatic again; explicit `project` only overrides the address/name.
+        let ip = match self.surface_ip(peer, &new_ports).await {
+            Some(ip) => ip,
+            None => {
+                *peer.exposed_ports.write().await = new_ports;
+                return;
             }
+        };
+        for &port in &new_ports {
+            if peer.bindings.contains_key(&port) {
+                continue;
+            }
+            Self::bind_one(peer, ip, port).await;
         }
 
         *peer.exposed_ports.write().await = new_ports;
+    }
+
+    /// The address to bind this peer's ports at: its existing surface, or a
+    /// freshly auto-projected one when it has ports to bind and none yet.
+    /// Returns None if there is nothing to bind. Caller holds the bind lock.
+    async fn surface_ip(self: &Arc<Self>, peer: &Arc<Peer>, ports: &[u16]) -> Option<IpAddr> {
+        if let Some(surface) = peer.surface.read().await.as_ref() {
+            return Some(surface.ip);
+        }
+        if ports.is_empty() {
+            return None;
+        }
+
+        let taken = self.projected_ips().await;
+        let ip = match surface::allocate(&taken) {
+            Ok(ip) => ip,
+            Err(e) => {
+                error!("cannot auto-project {}: {}", peer.endpoint_id, e);
+                return None;
+            }
+        };
+        if let Err(e) = surface::ensure_addr(ip) {
+            error!("cannot claim {} for {}: {}", ip, peer.endpoint_id, e);
+            return None;
+        }
+
+        let name = peer.label.clone();
+        *peer.surface.write().await = Some(Surface {
+            ip,
+            name: name.clone(),
+        });
+        if let Err(e) = self.surfaces.add(&peer.endpoint_id.to_string(), ip, name) {
+            warn!("failed to persist surface for {}: {}", peer.endpoint_id, e);
+        }
+        info!("auto-projected {} to {}", peer.endpoint_id, ip);
+        Some(ip)
     }
 
     /// Bind one forwarded port under `ip` and record the binding. A failed
@@ -434,7 +475,6 @@ impl PeerManager {
     /// grants naming it, and delete its pin. Callers hold the bind lock where
     /// it matters.
     async fn evict(&self, endpoint_id: &EndpointId, reason: &str) {
-        let mut had_named_surface = false;
         if let Some((_, peer)) = self.peers.remove(endpoint_id) {
             peer.removed.store(true, Ordering::Relaxed);
             peer.conn_notify.notify_one();
@@ -449,7 +489,6 @@ impl PeerManager {
             }
 
             if let Some(surface) = peer.surface.write().await.take() {
-                had_named_surface = surface.name.is_some();
                 if let Err(e) = surface::remove_addr(surface.ip) {
                     warn!("failed to remove address {}: {}", surface.ip, e);
                 }
@@ -462,11 +501,6 @@ impl PeerManager {
         }
         if let Err(e) = self.surfaces.remove(&endpoint_id.to_string()) {
             warn!("failed to remove surface record for {}: {}", endpoint_id, e);
-        }
-        if had_named_surface {
-            if let Err(e) = self.sync_hosts().await {
-                warn!("failed to sync /etc/hosts after eviction: {}", e);
-            }
         }
 
         info!("evicted peer {} ({})", endpoint_id, reason);
@@ -657,24 +691,25 @@ impl PeerManager {
         ips
     }
 
-    /// Rewrite the /etc/hosts managed block from every named surface.
-    async fn sync_hosts(&self) -> Result<()> {
+    /// Resolve a surface name to its address, for the owned resolver. Matches
+    /// the name a surface was projected under (an enrollment label, or an
+    /// explicit `--as`).
+    pub async fn resolve_name(&self, label: &str) -> Option<IpAddr> {
         let peers: Vec<Arc<Peer>> = self.peers.iter().map(|e| e.value().clone()).collect();
-        let mut entries = Vec::new();
         for peer in peers {
             if let Some(surface) = peer.surface.read().await.as_ref() {
-                if let Some(name) = &surface.name {
-                    entries.push((surface.ip, name.clone()));
+                if surface.name.as_deref() == Some(label) {
+                    return Some(surface.ip);
                 }
             }
         }
-        surface::sync_hosts(&entries)
+        None
     }
 
-    /// Project a peer's surface: give it a local address (chosen or allocated),
-    /// an optional /etc/hosts name, and bind every port it has announced. The
-    /// OS-visible effects (address, name) are applied before anything is
-    /// recorded, and rolled back if the name cannot be set.
+    /// Project a peer's surface explicitly: pin an address (chosen or
+    /// allocated) and a name, overriding whatever auto-project set. The name is
+    /// served by the owned resolver, so it needs no /etc/hosts write. Ports
+    /// already announced are rebound at the new address.
     pub async fn project(
         self: &Arc<Self>,
         peer_ref: &str,
@@ -692,6 +727,18 @@ impl PeerManager {
 
         let _guard = self.bind_lock.lock().await;
 
+        // Tear down any existing surface first so a re-project moves cleanly.
+        if let Some(old) = peer.surface.write().await.take() {
+            let held: Vec<u16> = peer.bindings.iter().map(|e| *e.key()).collect();
+            for port in held {
+                Self::release_binding(&peer, port).await;
+            }
+            let _ = surface::remove_addr(old.ip);
+        }
+
+        // Default the name to the peer's label so `project` without --as still
+        // yields a resolvable handle.
+        let name = name.or_else(|| peer.label.clone());
         let ip = match ip {
             Some(ip) => ip,
             None => {
@@ -705,22 +752,10 @@ impl PeerManager {
             ip,
             name: name.clone(),
         });
-
-        // A name change touches /etc/hosts (root-only); only do it when named,
-        // so an unnamed projection stays unprivileged.
-        if name.is_some() {
-            if let Err(e) = self.sync_hosts().await {
-                *peer.surface.write().await = None;
-                let _ = surface::remove_addr(ip);
-                return Err(e);
-            }
-        }
-
         if let Err(e) = self.surfaces.add(&id.to_string(), ip, name) {
             warn!("failed to persist surface for {}: {}", id, e);
         }
 
-        // Bind whatever the peer has already announced.
         let ports = peer.exposed_ports.read().await.clone();
         for port in ports {
             if !peer.bindings.contains_key(&port) {
@@ -761,9 +796,6 @@ impl PeerManager {
         if let Err(e) = self.surfaces.remove(&id.to_string()) {
             warn!("failed to remove surface record for {}: {}", id, e);
         }
-        if surface.name.is_some() {
-            self.sync_hosts().await?;
-        }
 
         info!("unprojected {}", id);
         Ok(())
@@ -801,7 +833,6 @@ impl PeerManager {
             }
         };
 
-        let mut any_named = false;
         for record in records {
             let id: EndpointId = match record.key.parse() {
                 Ok(id) => id,
@@ -814,19 +845,10 @@ impl PeerManager {
                 warn!("failed to restore address {}: {}", record.ip, e);
                 continue;
             }
-            if record.name.is_some() {
-                any_named = true;
-            }
             *peer.surface.write().await = Some(Surface {
                 ip: record.ip,
                 name: record.name,
             });
-        }
-
-        if any_named {
-            if let Err(e) = self.sync_hosts().await {
-                warn!("failed to sync /etc/hosts on restore: {}", e);
-            }
         }
     }
 }

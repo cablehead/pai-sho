@@ -1,17 +1,14 @@
 //! Surfaces - a peer's ports projected to a dedicated local address.
 //!
 //! A surface binds a peer's granted ports at one IP you choose or that is
-//! allocated from `127.0.1.0/24`, optionally with a `/etc/hosts` name. See
-//! docs/adr/0004-peer-surfaces.md.
+//! allocated from `127.0.1.0/24`, and carries an optional name that the owned
+//! resolver serves under `*.ps`. See docs/adr/0004-peer-surfaces.md.
 //!
-//! Two OS-visible effects live here, behind small helpers so the rest of the
-//! daemon never shells out or touches system files:
-//!
-//! - the local address (`ensure_addr` / `remove_addr`): a no-op on Linux,
-//!   where all of `127.0.0.0/8` already routes to `lo`; an `ifconfig lo0
-//!   alias` on macOS, where extra loopback addresses must be added.
-//! - the DNS handle (`sync_hosts`): a managed block in `/etc/hosts`, the same
-//!   on both platforms.
+//! Claiming the address is behind one helper so the rest of the daemon never
+//! shells out. `ensure_addr` / `remove_addr` is a no-op on Linux, where all of
+//! `127.0.0.0/8` already routes to `lo`, and an `ifconfig lo0 alias` on macOS,
+//! where extra loopback addresses must be added. The TUN-backed backend that
+//! claims a whole subnet in one privileged step replaces this seam later.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -107,65 +104,6 @@ fn run(cmd: &str, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
-const HOSTS_PATH: &str = "/etc/hosts";
-const HOSTS_BEGIN: &str = "# BEGIN pai-sho (managed, do not edit)";
-const HOSTS_END: &str = "# END pai-sho";
-
-/// Rewrite the pai-sho managed block in `/etc/hosts` to exactly `entries`.
-/// Removes the block entirely when `entries` is empty, which is how stale
-/// names from a crashed run get cleaned up on the next sync.
-pub fn sync_hosts(entries: &[(IpAddr, String)]) -> Result<()> {
-    sync_hosts_at(HOSTS_PATH, entries)
-}
-
-fn sync_hosts_at(path: &str, entries: &[(IpAddr, String)]) -> Result<()> {
-    let current =
-        std::fs::read_to_string(path).with_context(|| format!("failed to read {}", path))?;
-    let stripped = strip_block(&current);
-
-    let mut out = stripped;
-    if !entries.is_empty() {
-        if !out.is_empty() && !out.ends_with('\n') {
-            out.push('\n');
-        }
-        out.push_str(HOSTS_BEGIN);
-        out.push('\n');
-        for (ip, name) in entries {
-            out.push_str(&format!("{}\t{}\n", ip, name));
-        }
-        out.push_str(HOSTS_END);
-        out.push('\n');
-    }
-
-    std::fs::write(path, out).with_context(|| {
-        format!(
-            "failed to write {} (a DNS handle needs write access to it)",
-            path
-        )
-    })
-}
-
-/// Return `text` with the pai-sho managed block (and its markers) removed.
-fn strip_block(text: &str) -> String {
-    let mut out = String::new();
-    let mut in_block = false;
-    for line in text.lines() {
-        if line.trim() == HOSTS_BEGIN {
-            in_block = true;
-            continue;
-        }
-        if in_block {
-            if line.trim() == HOSTS_END {
-                in_block = false;
-            }
-            continue;
-        }
-        out.push_str(line);
-        out.push('\n');
-    }
-    out
-}
-
 /// A projected surface, persisted as JSON next to the daemon key so it
 /// survives a restart. Keyed by the peer's endpoint id.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -255,39 +193,5 @@ mod tests {
         let lo = IpAddr::V4(Ipv4Addr::LOCALHOST);
         ensure_addr(lo).unwrap();
         remove_addr(lo).unwrap();
-    }
-
-    #[test]
-    fn hosts_block_roundtrip() {
-        let dir = std::env::temp_dir().join(format!("pai-sho-hosts-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("hosts");
-        let path_str = path.to_str().unwrap();
-        std::fs::write(&path, "127.0.0.1 localhost\n").unwrap();
-
-        sync_hosts_at(
-            path_str,
-            &[(ip(2), "broker".into()), (ip(3), "ndyg".into())],
-        )
-        .unwrap();
-        let after = std::fs::read_to_string(&path).unwrap();
-        assert!(after.contains("127.0.0.1 localhost"));
-        assert!(after.contains("127.0.1.2\tbroker"));
-        assert!(after.contains("127.0.1.3\tndyg"));
-
-        // A resync replaces the block rather than stacking a second one.
-        sync_hosts_at(path_str, &[(ip(2), "broker".into())]).unwrap();
-        let after = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(after.matches(HOSTS_BEGIN).count(), 1);
-        assert!(after.contains("127.0.1.2\tbroker"));
-        assert!(!after.contains("ndyg"));
-
-        // Emptying removes the block and leaves the rest intact.
-        sync_hosts_at(path_str, &[]).unwrap();
-        let after = std::fs::read_to_string(&path).unwrap();
-        assert!(!after.contains(HOSTS_BEGIN));
-        assert!(after.contains("127.0.0.1 localhost"));
-
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

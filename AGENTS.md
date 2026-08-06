@@ -31,5 +31,6 @@ Before committing:
 - **Daemon**: Single iroh Endpoint, one ticket, manages all peers
 - **Peer**: Remote daemon identified by EndpointId
 - **Expose**: Declare a specific TCP port available to peers (explicit, not full network access)
-- **Surface**: A peer's ports addressed as a unit at a dedicated local IP
-- **Project**: Turn a peer's surface on -- bind its granted ports at that IP (chosen or allocated from 127.0.1.0/24), optionally with an /etc/hosts name. Nothing binds until projected. See docs/adr/0004-peer-surfaces.md
+- **Surface**: A peer's ports addressed as a unit at a dedicated local IP, named after its enrollment label
+- **Auto-project**: On its first announced port a peer is projected automatically -- an address is allocated and its ports bind there, so reach is automatic. `project`/`unproject` are the override (pin an IP, rename, toggle off). See docs/adr/0004 and 0005
+- **Resolver**: With `--resolver`, the daemon answers `<name>.ps` from live surfaces (`vibenv-ndyg.ps`). Authoritative for one suffix; never touches the system resolver

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 
 mod client;
 mod daemon;
@@ -8,6 +8,7 @@ mod enroll;
 mod grants;
 mod peer;
 mod protocol;
+mod resolver;
 mod surface;
 mod tunnel;
 
@@ -46,6 +47,10 @@ pub enum Command {
         /// One-time enrollment token to present to added peers
         #[arg(long)]
         enroll: Option<String>,
+        /// Serve the owned `*.ps` resolver on this UDP address (e.g.
+        /// 127.0.0.1:5353). Off when omitted.
+        #[arg(long)]
+        resolver: Option<SocketAddr>,
     },
 
     /// Add a peer (returns assigned IP)
@@ -144,8 +149,9 @@ async fn main() -> Result<()> {
             ports,
             key_path,
             enroll,
+            resolver,
         } => {
-            daemon::run(host, socket_path, peers, ports, key_path, enroll).await?;
+            daemon::run(host, socket_path, peers, ports, key_path, enroll, resolver).await?;
         }
         _ => {
             client::send_command(socket_path, cli.command).await?;
