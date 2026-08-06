@@ -8,6 +8,7 @@ mod enroll;
 mod grants;
 mod peer;
 mod protocol;
+mod surface;
 mod tunnel;
 
 #[derive(Parser)]
@@ -99,6 +100,28 @@ pub enum Command {
         #[arg(long)]
         label: String,
     },
+
+    /// Project a peer's surface to a local address so its ports are reachable.
+    /// See docs/adr/0004-peer-surfaces.md.
+    Project {
+        /// Peer to project (an endpoint key or an enrollment label)
+        peer: String,
+        /// Local address to bind at; allocated from 127.0.1.0/24 if omitted
+        #[arg(long)]
+        ip: Option<IpAddr>,
+        /// DNS handle to add in /etc/hosts (e.g. `broker`)
+        #[arg(long = "as")]
+        name: Option<String>,
+    },
+
+    /// Take a peer's surface down: unbind its ports, drop its address and name
+    Unproject {
+        /// Peer to unproject (an endpoint key or an enrollment label)
+        peer: String,
+    },
+
+    /// List surfaces: every known peer and its projection, if any
+    Surfaces,
 }
 
 #[tokio::main]

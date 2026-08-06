@@ -4,6 +4,7 @@ use crate::enroll::{Pins, Tokens};
 use crate::grants::Grants;
 use crate::peer::PeerManager;
 use crate::protocol::{GrantInfo, ListInfo, Request, Response, ALPN};
+use crate::surface::SurfaceStore;
 use anyhow::{anyhow, Context, Result};
 use iroh::{Endpoint, EndpointId, SecretKey};
 use std::net::IpAddr;
@@ -88,8 +89,13 @@ impl Daemon {
         let grants = Arc::new(RwLock::new(Grants::default()));
         let tokens = Arc::new(Tokens::default());
 
-        // Pins live next to the key: <key>.peers.json
+        // Pins and surfaces live next to the key: <key>.peers.json,
+        // <key>.surfaces.json
         let pins = Pins::new(PathBuf::from(format!("{}.peers.json", key_path.display())));
+        let surfaces = SurfaceStore::new(PathBuf::from(format!(
+            "{}.surfaces.json",
+            key_path.display()
+        )));
         let pinned = pins.load()?;
 
         let daemon = Arc::new(Self {
@@ -99,6 +105,7 @@ impl Daemon {
                 grants.clone(),
                 tokens.clone(),
                 pins,
+                surfaces,
             )),
             endpoint,
             grants,
@@ -110,6 +117,9 @@ impl Daemon {
                 error!("failed to load pinned peer {}: {}", pin.key, e);
             }
         }
+
+        // Restore projected surfaces onto the pinned peers just loaded.
+        daemon.peers.restore_surfaces().await;
 
         Ok(daemon)
     }
@@ -235,6 +245,21 @@ impl Daemon {
                 Ok(()) => Response::Ok,
                 Err(e) => Response::Error(e.to_string()),
             },
+            Request::Project { peer, ip, name } => {
+                let ip = match ip.map(|s| s.parse()).transpose() {
+                    Ok(ip) => ip,
+                    Err(_) => return Response::Error("invalid --ip address".to_string()),
+                };
+                match self.peers.project(&peer, ip, name).await {
+                    Ok(()) => Response::Ok,
+                    Err(e) => Response::Error(e.to_string()),
+                }
+            }
+            Request::Unproject { peer } => match self.peers.unproject(&peer).await {
+                Ok(()) => Response::Ok,
+                Err(e) => Response::Error(e.to_string()),
+            },
+            Request::Surfaces => Response::Surfaces(self.peers.surfaces().await),
         }
     }
 }
