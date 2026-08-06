@@ -29,6 +29,7 @@ Before committing:
 ## Key Concepts
 
 - **Daemon**: Single iroh Endpoint, one ticket, manages all peers
-- **Peer**: Remote daemon identified by EndpointId, assigned local 127.0.0.x IP
+- **Peer**: Remote daemon identified by EndpointId
 - **Expose**: Declare a specific TCP port available to peers (explicit, not full network access)
-- **Auto-bind**: When peer exposes port, automatically bind `<peer-ip>:<port>` locally
+- **Surface**: A peer's ports addressed as a unit at a dedicated local IP
+- **Project**: Turn a peer's surface on -- bind its granted ports at that IP (chosen or allocated from 127.0.1.0/24), optionally with an /etc/hosts name. Nothing binds until projected. See docs/adr/0004-peer-surfaces.md

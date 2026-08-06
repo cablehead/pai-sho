@@ -243,6 +243,12 @@ mod tests {
     }
 
     #[test]
+    fn allocate_errors_when_range_is_full() {
+        let taken: Vec<IpAddr> = (2u8..=254).map(ip).collect();
+        assert!(allocate(&taken).is_err());
+    }
+
+    #[test]
     fn stock_loopback_is_never_touched() {
         // ensure/remove on 127.0.0.1 are no-ops that always succeed, with no
         // privilege and no ifconfig call.

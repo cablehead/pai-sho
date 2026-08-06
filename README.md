@@ -56,10 +56,20 @@ pai-sho daemon -a 5hc4bjqfp6booceusm3jrfebbegyfi6aiqwbgx4xxqmpvg5usoyq \
     -e 3001,7331 --enroll 7fd25613dd5e17cb...
 ```
 
-The VM enrolls under the label `vm`, and `localhost:3001` and `localhost:7331` on
-my laptop reach it -- and only my laptop; anyone else who dials the VM is refused.
-Close the laptop, reopen it, and the connection restores on its own, no new token
-needed.
+The VM enrolls under the label `vm`, and only my laptop can reach it; anyone else
+who dials the VM is refused. Close the laptop, reopen it, and the connection
+restores on its own, no new token needed.
+
+Its ports are not on `localhost` yet. I **project** the VM's surface to give it a
+local address and a name, then its ports are reachable under that name:
+
+```sh
+pai-sho project vm --as vm
+# 3001 and 7331 now answer at vm:3001 and vm:7331
+```
+
+Every port the VM exposes binds under one address, so a second projected peer's
+`:3001` never collides with this one. Take it down with `pai-sho unproject vm`.
 
 Spin up something new on the VM and expose it live:
 
@@ -68,8 +78,8 @@ http-nu :3002 -c '{|req| "hello from a new experiment"}'
 pai-sho expose 3002
 ```
 
-It's immediately at `http://localhost:3002` in my browser. Done with it?
-`pai-sho unexpose 3002`.
+Because `vm` is already projected, `3002` binds under it too, immediately at
+`http://vm:3002` in my browser. Done with it? `pai-sho unexpose 3002`.
 
 ## Install
 
@@ -104,6 +114,9 @@ add-peer <ticket>          Connect to a peer
 remove-peer <ticket>       Disconnect from a peer (and drop its pin)
 expose <port> [--to <key>] Grant a local port to peers (default: all known)
 unexpose <port> [--to <k>] Revoke grants for a port (or one peer's grant)
+project <peer> [--ip <a>] [--as <name>]  Bind a peer's ports at a local address
+unproject <peer>           Take a peer's surface down (unbind its ports)
+surfaces                   Show each peer and its projection (JSON)
 list                       Show peers, grants, and bindings (JSON)
 ```
 
@@ -135,13 +148,20 @@ presents a one-time token minted by `grant-token`. A valid claim pins the peer's
 under the token's label and is then spent; pins persist across restarts, so a reboot
 does not orphan enrolled workloads ([ADR 0002](docs/adr/0002-token-enrollment.md)).
 
-**Forwarding.** Each peer is announced only the ports granted to it. When a peer
-grants you port 3001, a local TCP listener binds `127.0.0.1:3001` on your side, and
-traffic runs over the encrypted QUIC connection. It works both ways -- something
-running locally on `:4001` becomes reachable on the peer with `pai-sho expose 4001`.
+**Forwarding.** Each peer is announced only the ports granted to it. A granted
+port is not reachable until you **project** the peer, which binds its ports at a
+dedicated local address. Traffic then runs over the encrypted QUIC connection. It
+works both ways -- something running locally on `:4001` becomes reachable on the
+peer with `pai-sho expose 4001`.
+
+**Surfaces.** A peer's ports are addressed as a unit at one local IP. `project`
+turns that on (an address chosen with `--ip` or allocated from `127.0.1.0/24`, and
+an optional `/etc/hosts` name with `--as`); `unproject` turns it off. Because each
+peer owns its address, two peers can expose the same port without colliding.
+Projections persist across a restart ([ADR 0004](docs/adr/0004-peer-surfaces.md)).
 
 **Reconnection.** If the connection drops, both sides reconnect with exponential
-backoff. Existing bindings stay in place and resume when the link comes back.
+backoff. Projected surfaces stay in place and rebind when the link comes back.
 
 ## See also
 
