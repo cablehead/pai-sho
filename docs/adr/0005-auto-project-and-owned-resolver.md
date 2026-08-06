@@ -29,14 +29,34 @@ automatic again. `project` / `unproject` remain as the override: pin a specific
 address, rename, or toggle a peer off.
 
 **Names come from an owned resolver, not `/etc/hosts`.** The daemon serves a small
-authoritative resolver for one suffix (`.ps`) from the live surface table:
-`<label>.ps` resolves to that surface's address and stops resolving when it goes
-away. This replaces the `/etc/hosts` writing from 0004, which needed root on every
-change and could not run as the unprivileged `app` user inside a VM. The resolver
-is a plain UDP listener on a high port, so it needs no privilege. The OS is wired
-to send only `.ps` to it: `/etc/resolver/ps` on macOS, and a dnsmasq
-`server=/ps/127.0.0.1#5353` forward on Linux (the provisioning stack owns this,
-and pai-sho never touches the global resolver itself).
+authoritative resolver from the live surface table: `<label>.ps` resolves to that
+surface's address and stops resolving when it goes away. This replaces the
+`/etc/hosts` writing from 0004, which needed root on every change and could not
+run as the unprivileged `app` user inside a VM.
+
+The resolver is authoritative for `.ps` and **nothing else**. It never recurses or
+forwards; a query outside `.ps` gets an empty answer. dnsmasq stays the front door
+in the VMs, splitting `.ps` to this resolver and sending everything else upstream.
+Keeping the resolver `.ps`-only is deliberate: a bug or compromise in it can only
+affect `.ps` name resolution, not all DNS on the box. pai-sho never touches
+`/etc/resolv.conf`; dnsmasq owns that.
+
+**The resolver listens on a fixed owned address, at port 53 under TUN.** Once the
+daemon owns a TUN and its subnet, the resolver answers at a reserved address on
+that subnet, port 53, the way Tailscale's MagicDNS answers at `100.100.100.100:53`.
+That is not a host `bind()`: the daemon reads the query off the tun fd and replies
+in its userspace stack, so it needs no `CAP_NET_BIND_SERVICE` and cannot collide
+with any other listener. It rides the one `CAP_NET_ADMIN` the tun already costs.
+This drops the port suffix everywhere downstream:
+
+- Linux dnsmasq: `server=/ps/<owned-ip>` (no `#5353`).
+- macOS: `/etc/resolver/ps` with `nameserver <owned-ip>` (no `port` line).
+
+Before the TUN backend exists, the interim resolver is a real UDP socket on
+`127.0.0.1:5353` (a high port, so still no privilege), bridged by dnsmasq
+`server=/ps/127.0.0.1#5353`. The `--resolver <addr>` flag is the same either way;
+only the address and whether the answer comes from a real socket or the stack
+change.
 
 **The address backend is pluggable, TUN is the target.** Today the address is a
 loopback IP, which is free on Linux and needs an `ifconfig lo0 alias` on macOS.
@@ -54,5 +74,18 @@ stays as the fallback when `/dev/net/tun` is absent, so a no-TUN VM still works.
   identity, but the pai-sho-exposed role port can be constant across VMs, since the
   name and address disambiguate. That simplification lives in the provisioning
   stack, not here.
-- pai-sho is a good DNS citizen: it answers one suffix on its own socket and never
-  seizes `/etc/resolv.conf`. Wiring the OS to it is the operator's explicit step.
+- pai-sho stays a good DNS citizen: authoritative for `.ps` only, never recursing
+  and never seizing `/etc/resolv.conf`. dnsmasq remains in the VMs as the front
+  door, and wiring it to the resolver is the provisioning stack's job.
+
+## Tradeoffs
+
+- `.ps` is a real ccTLD (Palestine). Using it as the internal suffix shadows that
+  public TLD on any box pointed at the resolver: genuine `*.ps` names become
+  unreachable there, and a split misfire could leak an internal name outward. The
+  scoping (dnsmasq only forwards `.ps` to us) contains it, but the collision is a
+  known risk; a non-delegated suffix (`home.arpa`, or an invented label) would
+  avoid it.
+- Name integrity rests on the enrollment label. `<label>.ps` is trustworthy only
+  because the operator mints the label into the token, not the peer. If a peer
+  could set its own label it could claim another surface's name.
