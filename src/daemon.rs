@@ -368,15 +368,48 @@ pub async fn run(
 
     info!("listening on {:?}", socket_path);
 
-    loop {
-        let (stream, _) = listener.accept().await?;
-        let daemon = daemon.clone();
-        tokio::spawn(async move {
-            if let Err(e) = handle_client(stream, daemon).await {
-                error!("client error: {}", e);
-            }
-        });
+    // Serve CLI commands until asked to stop. Racing the accept loop against a
+    // shutdown signal lets a supervisor (launchd, brew services) stop the daemon
+    // cleanly; on exit the TUN fd closes and the kernel removes the utun and its
+    // route. See cablehead/xs#150, cablehead/http-nu#53.
+    let socket_loop = async {
+        loop {
+            let (stream, _) = listener.accept().await?;
+            let daemon = daemon.clone();
+            tokio::spawn(async move {
+                if let Err(e) = handle_client(stream, daemon).await {
+                    error!("client error: {}", e);
+                }
+            });
+        }
+        #[allow(unreachable_code)]
+        Ok::<(), anyhow::Error>(())
+    };
+
+    tokio::select! {
+        r = socket_loop => r?,
+        _ = shutdown_signal() => info!("shutdown signal received, stopping"),
     }
+    Ok(())
+}
+
+/// Resolve when the process is asked to terminate. Handles both SIGINT (Ctrl-C)
+/// and SIGTERM: supervisors (launchd, brew services, systemd) send SIGTERM, so
+/// a daemon that traps only SIGINT is hard-killed and skips orderly shutdown.
+/// Modeled on cablehead/xs#150 and cablehead/http-nu#53.
+#[cfg(unix)]
+async fn shutdown_signal() {
+    use tokio::signal::unix::{signal, SignalKind};
+    let mut sigterm = signal(SignalKind::terminate()).expect("install SIGTERM handler");
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = sigterm.recv() => {}
+    }
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() {
+    let _ = tokio::signal::ctrl_c().await;
 }
 
 async fn handle_client(stream: UnixStream, daemon: Arc<Daemon>) -> Result<()> {
