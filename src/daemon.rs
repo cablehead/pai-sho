@@ -76,7 +76,11 @@ fn load_or_create_key(path: &Path) -> Result<SecretKey> {
 }
 
 impl Daemon {
-    pub async fn new(host: IpAddr, key_path: &Path) -> Result<Arc<Self>> {
+    pub async fn new(
+        host: IpAddr,
+        key_path: &Path,
+        netstack: Option<crate::netstack::NetStack>,
+    ) -> Result<Arc<Self>> {
         let secret_key = load_or_create_key(key_path)?;
 
         let endpoint = Endpoint::builder(iroh::endpoint::presets::N0)
@@ -106,6 +110,7 @@ impl Daemon {
                 tokens.clone(),
                 pins,
                 surfaces,
+                netstack,
             )),
             endpoint,
             grants,
@@ -265,6 +270,9 @@ impl Daemon {
 }
 
 /// Run the daemon
+/// The TUN backend's reserved resolver address (answers `.ps` on :53 in-stack).
+const TUN_RESOLVER_IP: std::net::Ipv4Addr = std::net::Ipv4Addr::new(10, 99, 0, 53);
+
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
     host: IpAddr,
@@ -274,17 +282,45 @@ pub async fn run(
     key_path: Option<PathBuf>,
     enroll: Option<String>,
     resolver: Option<std::net::SocketAddr>,
+    tun: Option<String>,
 ) -> Result<()> {
     // Clean up old socket
     let _ = std::fs::remove_file(socket_path);
 
+    // Bring up the TUN owned-network backend if requested. Its stream of
+    // accepted connections is spliced onto peer tunnels below.
+    let netstack = match &tun {
+        Some(dev) => match crate::netstack::spawn(dev, TUN_RESOLVER_IP) {
+            Ok((ns, accepts)) => {
+                info!(
+                    "tun backend up on {} (resolver {}:53)",
+                    dev, TUN_RESOLVER_IP
+                );
+                Some((ns, accepts))
+            }
+            Err(e) => {
+                error!("tun backend failed on {}: {}", dev, e);
+                None
+            }
+        },
+        None => None,
+    };
+    let ns_handle = netstack.as_ref().map(|(ns, _)| ns.clone());
+
     let key_path = key_path.unwrap_or_else(default_key_path);
-    let daemon = Daemon::new(host, &key_path).await?;
+    let daemon = Daemon::new(host, &key_path, ns_handle).await?;
 
     println!("Ticket: {}", daemon.ticket());
     info!("daemon started, host={}, key={}", host, key_path.display());
 
-    // Serve the owned resolver, if requested.
+    // Splice accepted TUN connections onto peer tunnels.
+    if let Some((_, accepts)) = netstack {
+        let peers = daemon.peers.clone();
+        tokio::spawn(async move { peers.run_netstack_accepts(accepts).await });
+    }
+
+    // Serve the loopback owned resolver, if requested (independent of --tun,
+    // which serves its own resolver in-stack).
     if let Some(listen) = resolver {
         let peers = daemon.peers.clone();
         tokio::spawn(async move {

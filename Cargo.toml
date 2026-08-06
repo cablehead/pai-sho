@@ -29,6 +29,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Concurrent collections
 dashmap = "6"
 
+# TUN owned-network backend (userspace stack). See src/netstack.rs, ADR 0005.
+smoltcp = "0.11"
+libc = "0.2"
+
 # Misc
 rand = "0.9"
 

@@ -66,6 +66,22 @@ async fn handle_query(query: &[u8], peers: &Arc<PeerManager>) -> Option<Vec<u8>>
     Some(build_reply(query, q.qend, answer))
 }
 
+/// Build a reply for `query` synchronously, resolving `.ps` names through
+/// `resolve`. Used by the in-stack (TUN) resolver, which holds the name->ip
+/// map directly. Returns None only if the query is malformed.
+pub fn reply<F: FnOnce(&str) -> Option<std::net::Ipv4Addr>>(
+    query: &[u8],
+    resolve: F,
+) -> Option<Vec<u8>> {
+    let q = parse_question(query)?;
+    let answer = if q.qtype == TYPE_A {
+        host_label(&q.name).and_then(resolve)
+    } else {
+        None
+    };
+    Some(build_reply(query, q.qend, answer))
+}
+
 const TYPE_A: u16 = 1;
 
 struct Question {

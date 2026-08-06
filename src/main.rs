@@ -6,6 +6,7 @@ mod client;
 mod daemon;
 mod enroll;
 mod grants;
+mod netstack;
 mod peer;
 mod protocol;
 mod resolver;
@@ -51,6 +52,11 @@ pub enum Command {
         /// 127.0.0.1:5353). Off when omitted.
         #[arg(long)]
         resolver: Option<SocketAddr>,
+        /// Use the TUN owned-network backend on this pre-created device (e.g.
+        /// `ps0`). Surfaces bind on the TUN via a userspace stack, and the
+        /// `.ps` resolver answers in-stack on 10.99.0.53:53. Loopback when omitted.
+        #[arg(long)]
+        tun: Option<String>,
     },
 
     /// Add a peer (returns assigned IP)
@@ -150,8 +156,19 @@ async fn main() -> Result<()> {
             key_path,
             enroll,
             resolver,
+            tun,
         } => {
-            daemon::run(host, socket_path, peers, ports, key_path, enroll, resolver).await?;
+            daemon::run(
+                host,
+                socket_path,
+                peers,
+                ports,
+                key_path,
+                enroll,
+                resolver,
+                tun,
+            )
+            .await?;
         }
         _ => {
             client::send_command(socket_path, cli.command).await?;
