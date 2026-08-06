@@ -96,11 +96,13 @@ caddy, and `.pai-sho` names intentionally cannot get public-CA certs.
 
 ## Tradeoffs
 
-- **macOS `/etc/resolver` for custom suffixes is fragile.** A reported macOS 26
-  regression breaks `/etc/resolver/<domain>` for non-public TLDs. Since the Mac
-  operator resolves `.pai-sho` this way, verify it on the target macOS
-  version early; the fallback is a local forwarder (dnsmasq-style) rather than
-  `/etc/resolver`.
+- **macOS `/etc/resolver` for custom suffixes.** There were reports of a macOS 26
+  regression breaking `/etc/resolver/<domain>` for non-public TLDs. Verified
+  working on the fleet's build mini (macOS 26.4.1): `/etc/resolver/pai-sho` ->
+  `nameserver 10.99.0.53` resolves `*.pai-sho` system-wide, and `curl
+  vibenv-goo.pai-sho:9000` reached a peer over the utun by name. If a future
+  macOS version does break it, the fallback is a local forwarder (dnsmasq-style)
+  rather than `/etc/resolver`.
 - **Name integrity rests on the enrollment label.** `<label>.pai-sho` is
   trustworthy only because the operator mints the label into the token, not the
   peer. If a peer could set its own label it could claim another surface's name.
