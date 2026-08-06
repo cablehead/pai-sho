@@ -423,7 +423,7 @@ impl PeerManager {
         }
 
         let taken = self.projected_ips().await;
-        let ip = match surface::allocate(&taken) {
+        let ip = match surface::allocate(&taken, self.surface_base()) {
             Ok(ip) => ip,
             Err(e) => {
                 error!("cannot auto-project {}: {}", peer.endpoint_id, e);
@@ -769,7 +769,17 @@ impl PeerManager {
             .map(|e| *e.key())
     }
 
-    /// A snapshot of the loopback addresses currently in use by surfaces.
+    /// The /24 to allocate surface addresses from: the TUN subnet when the
+    /// tun backend is active, else the loopback range.
+    fn surface_base(&self) -> [u8; 3] {
+        if self.netstack.is_some() {
+            surface::TUN_BASE
+        } else {
+            surface::LOOPBACK_BASE
+        }
+    }
+
+    /// A snapshot of the addresses currently in use by surfaces.
     async fn projected_ips(&self) -> Vec<IpAddr> {
         let peers: Vec<Arc<Peer>> = self.peers.iter().map(|e| e.value().clone()).collect();
         let mut ips = Vec::new();
@@ -837,7 +847,7 @@ impl PeerManager {
             Some(ip) => ip,
             None => {
                 let taken = self.projected_ips().await;
-                surface::allocate(&taken)?
+                surface::allocate(&taken, self.surface_base())?
             }
         };
 

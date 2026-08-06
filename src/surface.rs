@@ -22,17 +22,30 @@ pub struct Surface {
     pub name: Option<String>,
 }
 
-/// Allocate a loopback address not already in `taken`, from `127.0.1.2`
-/// upward. `.0` is the network, `.1` is squatted by Debian for the hostname,
-/// and `.255` is broadcast, so the usable window is `.2 ..= .254`.
-pub fn allocate(taken: &[IpAddr]) -> Result<IpAddr> {
+/// Loopback backend: surfaces live in `127.0.1.0/24` (all of `127/8` routes to
+/// `lo` on Linux; on macOS the addresses are aliased).
+pub const LOOPBACK_BASE: [u8; 3] = [127, 0, 1];
+/// TUN backend: surfaces live in `10.99.1.0/24`, inside the owned `10.99.0.0/16`
+/// subnet but clear of the reserved low addresses (`.0.1` gateway, `.0.2`
+/// point-to-point peer, `.0.53` resolver).
+pub const TUN_BASE: [u8; 3] = [10, 99, 1];
+
+/// Allocate an address in `base.0/24` not already in `taken`, from `.2` upward.
+/// `.0` is the network, `.1` a gateway/hostname convention, `.255` broadcast,
+/// so the usable window is `.2 ..= .254`.
+pub fn allocate(taken: &[IpAddr], base: [u8; 3]) -> Result<IpAddr> {
     for host in 2u8..=254 {
-        let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 1, host));
+        let ip = IpAddr::V4(Ipv4Addr::new(base[0], base[1], base[2], host));
         if !taken.contains(&ip) {
             return Ok(ip);
         }
     }
-    anyhow::bail!("no free address in 127.0.1.0/24; unproject a surface first")
+    anyhow::bail!(
+        "no free address in {}.{}.{}.0/24; unproject a surface first",
+        base[0],
+        base[1],
+        base[2]
+    )
 }
 
 /// Make `ip` usable as a local bind address. Idempotent.
@@ -172,18 +185,24 @@ mod tests {
     #[test]
     fn allocate_skips_taken() {
         let taken = vec![ip(2), ip(3), ip(5)];
-        assert_eq!(allocate(&taken).unwrap(), ip(4));
+        assert_eq!(allocate(&taken, LOOPBACK_BASE).unwrap(), ip(4));
     }
 
     #[test]
     fn allocate_from_empty_starts_at_two() {
-        assert_eq!(allocate(&[]).unwrap(), ip(2));
+        assert_eq!(allocate(&[], LOOPBACK_BASE).unwrap(), ip(2));
+    }
+
+    #[test]
+    fn allocate_uses_the_given_base() {
+        let ip = allocate(&[], TUN_BASE).unwrap();
+        assert_eq!(ip, IpAddr::V4(Ipv4Addr::new(10, 99, 1, 2)));
     }
 
     #[test]
     fn allocate_errors_when_range_is_full() {
         let taken: Vec<IpAddr> = (2u8..=254).map(ip).collect();
-        assert!(allocate(&taken).is_err());
+        assert!(allocate(&taken, LOOPBACK_BASE).is_err());
     }
 
     #[test]
