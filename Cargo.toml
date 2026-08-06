@@ -30,7 +30,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dashmap = "6"
 
 # TUN owned-network backend (userspace stack). See src/netstack.rs, ADR 0005.
-smoltcp = "0.11"
+tokio-smoltcp = "0.6"
 libc = "0.2"
 
 # Misc

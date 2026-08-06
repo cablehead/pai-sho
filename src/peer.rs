@@ -20,6 +20,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, Mutex, Notify, RwLock};
 use tracing::{error, info, warn};
 
@@ -537,10 +538,9 @@ impl PeerManager {
         self: Arc<Self>,
         mut accepts: mpsc::UnboundedReceiver<Accept>,
     ) {
-        let ns = match &self.netstack {
-            Some(ns) => ns.clone(),
-            None => return,
-        };
+        if self.netstack.is_none() {
+            return;
+        }
         while let Some(acc) = accepts.recv().await {
             let ip = IpAddr::V4(acc.ip);
             let Some(peer) = self.peer_for_ip(ip).await else {
@@ -550,9 +550,8 @@ impl PeerManager {
                 );
                 continue;
             };
-            let ns = ns.clone();
             tokio::spawn(async move {
-                if let Err(e) = bridge(peer, acc, ns).await {
+                if let Err(e) = bridge(peer, acc).await {
                     warn!("tun bridge ended: {}", e);
                 }
             });
@@ -953,32 +952,17 @@ impl PeerManager {
 /// Splice one accepted TUN connection onto the peer's QUIC tunnel: client
 /// bytes to the tunnel, tunnel bytes back to the client. Ends when either side
 /// closes.
-async fn bridge(peer: Arc<Peer>, acc: Accept, ns: NetStack) -> Result<()> {
+async fn bridge(peer: Arc<Peer>, acc: Accept) -> Result<()> {
     let (mut qs, mut qr) = peer.open_tunnel(acc.port).await?;
-    let mut from_client = acc.from_client;
-    let to_client = acc.to_client;
+    let (mut client_r, mut client_w) = tokio::io::split(acc.stream);
 
     let client_to_quic = async {
-        while let Some(buf) = from_client.recv().await {
-            if qs.write_all(&buf).await.is_err() {
-                break;
-            }
-        }
+        let _ = tokio::io::copy(&mut client_r, &mut qs).await;
         let _ = qs.finish();
     };
     let quic_to_client = async {
-        let mut b = vec![0u8; 16 * 1024];
-        loop {
-            match qr.read(&mut b).await {
-                Ok(Some(n)) if n > 0 => {
-                    if to_client.send(b[..n].to_vec()).await.is_err() {
-                        break;
-                    }
-                    ns.wake();
-                }
-                _ => break,
-            }
-        }
+        let _ = tokio::io::copy(&mut qr, &mut client_w).await;
+        let _ = client_w.shutdown().await;
     };
     tokio::select! {
         _ = client_to_quic => {}
