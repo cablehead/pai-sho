@@ -2,7 +2,7 @@
 //!
 //! A surface binds a peer's granted ports at one IP you choose or that is
 //! allocated from `127.0.1.0/24`, and carries an optional name that the owned
-//! resolver serves under `*.ps`. See docs/adr/0004-peer-surfaces.md.
+//! resolver serves under `*.ps.internal`. See docs/adr/0004-peer-surfaces.md.
 //!
 //! Claiming the address is behind one helper so the rest of the daemon never
 //! shells out. `ensure_addr` / `remove_addr` is a no-op on Linux, where all of

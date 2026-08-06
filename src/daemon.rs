@@ -270,7 +270,7 @@ impl Daemon {
 }
 
 /// Run the daemon
-/// The TUN backend's reserved resolver address (answers `.ps` on :53 in-stack).
+/// The TUN backend's reserved resolver address (answers `.ps.internal` on :53 in-stack).
 const TUN_RESOLVER_IP: std::net::Ipv4Addr = std::net::Ipv4Addr::new(10, 99, 0, 53);
 
 #[allow(clippy::too_many_arguments)]

@@ -48,13 +48,13 @@ pub enum Command {
         /// One-time enrollment token to present to added peers
         #[arg(long)]
         enroll: Option<String>,
-        /// Serve the owned `*.ps` resolver on this UDP address (e.g.
+        /// Serve the owned `*.ps.internal` resolver on this UDP address (e.g.
         /// 127.0.0.1:5353). Off when omitted.
         #[arg(long)]
         resolver: Option<SocketAddr>,
         /// Use the TUN owned-network backend on this pre-created device (e.g.
         /// `ps0`). Surfaces bind on the TUN via a userspace stack, and the
-        /// `.ps` resolver answers in-stack on 10.99.0.53:53. Loopback when omitted.
+        /// `.ps.internal` resolver answers in-stack on 10.99.0.53:53. Loopback when omitted.
         #[arg(long)]
         tun: Option<String>,
     },
