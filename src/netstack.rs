@@ -118,8 +118,10 @@ impl AsRawFd for Tun {
     }
 }
 
-/// Attach to a pre-created tun by name (IFF_TUN | IFF_NO_PI), nonblocking. The
-/// device must already exist and be owned by this user, so no CAP_NET_ADMIN.
+/// Linux: attach to a pre-created tun by name (IFF_TUN | IFF_NO_PI). The device
+/// is created and configured by the boot step and owned by this user, so the
+/// daemon needs no CAP_NET_ADMIN. Packets have no header (IFF_NO_PI).
+#[cfg(target_os = "linux")]
 fn open_tun(name: &str) -> Result<RawFd> {
     let fd = unsafe { libc::open(c"/dev/net/tun".as_ptr(), libc::O_RDWR) };
     anyhow::ensure!(fd >= 0, "open /dev/net/tun failed (errno {})", errno());
@@ -137,9 +139,147 @@ fn open_tun(name: &str) -> Result<RawFd> {
         name,
         errno()
     );
+    set_nonblocking(fd);
+    Ok(fd)
+}
+
+/// macOS: create a utun via the SYSPROTO_CONTROL socket, configure its address
+/// and the subnet route, and return the fd. Needs root (utun creation and
+/// ifconfig/route both do). The `name` arg is ignored; the kernel assigns the
+/// next free utunN. utun frames carry a 4-byte address-family header (handled
+/// in tun_read/tun_write).
+#[cfg(target_os = "macos")]
+fn open_tun(_name: &str) -> Result<RawFd> {
+    use std::mem;
+    let fd = unsafe { libc::socket(libc::PF_SYSTEM, libc::SOCK_DGRAM, libc::SYSPROTO_CONTROL) };
+    anyhow::ensure!(fd >= 0, "utun socket failed (errno {}); need root", errno());
+
+    let mut info: libc::ctl_info = unsafe { mem::zeroed() };
+    for (i, c) in b"com.apple.net.utun_control".iter().enumerate() {
+        info.ctl_name[i] = *c as libc::c_char;
+    }
+    let r = unsafe { libc::ioctl(fd, libc::CTLIOCGINFO, &mut info) };
+    anyhow::ensure!(r >= 0, "CTLIOCGINFO failed (errno {})", errno());
+
+    let mut addr: libc::sockaddr_ctl = unsafe { mem::zeroed() };
+    addr.sc_len = mem::size_of::<libc::sockaddr_ctl>() as u8;
+    addr.sc_family = libc::AF_SYSTEM as u8;
+    addr.ss_sysaddr = libc::AF_SYS_CONTROL as u16;
+    addr.sc_id = info.ctl_id;
+    addr.sc_unit = 0; // kernel assigns the next free utun
+    let r = unsafe {
+        libc::connect(
+            fd,
+            &addr as *const _ as *const libc::sockaddr,
+            mem::size_of::<libc::sockaddr_ctl>() as libc::socklen_t,
+        )
+    };
+    anyhow::ensure!(r >= 0, "utun connect failed (errno {}); need root", errno());
+
+    // read back the assigned interface name (utunN)
+    let mut namebuf = [0u8; 32];
+    let mut len = namebuf.len() as libc::socklen_t;
+    const UTUN_OPT_IFNAME: libc::c_int = 2;
+    let r = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SYSPROTO_CONTROL,
+            UTUN_OPT_IFNAME,
+            namebuf.as_mut_ptr() as *mut libc::c_void,
+            &mut len,
+        )
+    };
+    anyhow::ensure!(r >= 0, "UTUN_OPT_IFNAME failed (errno {})", errno());
+    let ifname = std::str::from_utf8(&namebuf[..len.saturating_sub(1) as usize])
+        .unwrap_or("utun")
+        .to_string();
+    info!("created {}", ifname);
+
+    // Configure the address and subnet route (we are root here). Mirrors the
+    // Linux boot step's `ip addr add 10.99.0.1/16 dev ps0`: 10.99.0.1 local,
+    // 10.99.0.2 the point-to-point peer, and the /16 routed into the utun so
+    // packets to any surface address reach the stack.
+    run("ifconfig", &[&ifname, "10.99.0.1", "10.99.0.2", "up"])?;
+    run(
+        "route",
+        &["-q", "-n", "add", "-net", "10.99.0.0/16", "-interface", &ifname],
+    )?;
+
+    set_nonblocking(fd);
+    Ok(fd)
+}
+
+fn set_nonblocking(fd: RawFd) {
     let fl = unsafe { libc::fcntl(fd, libc::F_GETFL) };
     unsafe { libc::fcntl(fd, libc::F_SETFL, fl | libc::O_NONBLOCK) };
-    Ok(fd)
+}
+
+/// Read one IP packet off the tun. On macOS, strip the 4-byte utun
+/// address-family header; on Linux (IFF_NO_PI) there is none.
+fn tun_read(fd: RawFd) -> io::Result<Vec<u8>> {
+    #[cfg(target_os = "macos")]
+    let header = 4usize;
+    #[cfg(not(target_os = "macos"))]
+    let header = 0usize;
+
+    let mut buf = vec![0u8; MTU + header];
+    let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+    if n as usize > header {
+        Ok(buf[header..n as usize].to_vec())
+    } else if n >= 0 {
+        Err(io::ErrorKind::WouldBlock.into())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+/// Write one IP packet to the tun. On macOS, prepend the 4-byte utun
+/// address-family header (AF_INET / AF_INET6, big-endian); on Linux, none.
+fn tun_write(fd: RawFd, pkt: &[u8]) -> io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        if pkt.is_empty() {
+            return Ok(());
+        }
+        // 4 = AF_INET, 30 = AF_INET6 on macOS, big-endian
+        let af: u32 = if pkt[0] >> 4 == 6 { 30 } else { 2 };
+        let mut framed = Vec::with_capacity(4 + pkt.len());
+        framed.extend_from_slice(&af.to_be_bytes());
+        framed.extend_from_slice(pkt);
+        let n =
+            unsafe { libc::write(fd, framed.as_ptr() as *const libc::c_void, framed.len()) };
+        return if n >= 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        };
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let n = unsafe { libc::write(fd, pkt.as_ptr() as *const libc::c_void, pkt.len()) };
+        if n >= 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+}
+
+/// Run a command, erroring on nonzero exit. Used on macOS to configure the utun.
+#[cfg(target_os = "macos")]
+fn run(cmd: &str, args: &[&str]) -> Result<()> {
+    let out = std::process::Command::new(cmd)
+        .args(args)
+        .output()
+        .with_context(|| format!("failed to run {}", cmd))?;
+    anyhow::ensure!(
+        out.status.success(),
+        "{} {}: {}",
+        cmd,
+        args.join(" "),
+        String::from_utf8_lossy(&out.stderr).trim()
+    );
+    Ok(())
 }
 
 fn errno() -> i32 {
@@ -168,24 +308,8 @@ pub fn spawn(
 
     let device = AsyncCapture::new(
         tun,
-        |t: &mut Tun| {
-            let mut buf = vec![0u8; MTU];
-            let n = unsafe { libc::read(t.fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
-            if n > 0 {
-                buf.truncate(n as usize);
-                Ok(buf)
-            } else {
-                Err(io::Error::last_os_error())
-            }
-        },
-        |t: &mut Tun, pkt: &[u8]| {
-            let n = unsafe { libc::write(t.fd, pkt.as_ptr() as *const libc::c_void, pkt.len()) };
-            if n >= 0 {
-                Ok(())
-            } else {
-                Err(io::Error::last_os_error())
-            }
-        },
+        |t: &mut Tun| tun_read(t.fd),
+        |t: &mut Tun, pkt: &[u8]| tun_write(t.fd, pkt),
         caps,
     )
     .context("failed to create tun async device")?;
