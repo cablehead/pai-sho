@@ -50,7 +50,7 @@ fn load_or_create_key(path: &Path) -> Result<SecretKey> {
         return Ok(SecretKey::from_bytes(&bytes));
     }
 
-    let key = SecretKey::generate(&mut rand::rng());
+    let key = SecretKey::generate();
 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
