@@ -223,8 +223,10 @@ fn tun_read(fd: RawFd) -> io::Result<Vec<u8>> {
     let header = 0usize;
 
     let mut buf = vec![0u8; MTU + header];
+    // libc::read returns isize: >header is a packet, 0..=header is a runt/empty
+    // (treat as would-block), negative is an error (EAGAIN maps to WouldBlock).
     let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
-    if n as usize > header {
+    if n > header as isize {
         Ok(buf[header..n as usize].to_vec())
     } else if n >= 0 {
         Err(io::ErrorKind::WouldBlock.into())
