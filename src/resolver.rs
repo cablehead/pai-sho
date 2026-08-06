@@ -1,16 +1,16 @@
-//! Owned resolver - answers `*.ps.internal` from live surfaces.
+//! Owned resolver - answers `*.pai-sho` from live surfaces.
 //!
 //! A small UDP DNS server. It is authoritative for one suffix
-//! (`.ps.internal`) and answers A queries from the surface table:
-//! `vibenv-ndyg.ps.internal` resolves to whatever address the surface named
+//! (`.pai-sho`) and answers A queries from the surface table:
+//! `vibenv-ndyg.pai-sho` resolves to whatever address the surface named
 //! `vibenv-ndyg` is projected at, and stops resolving when that surface goes
 //! away. It does not recurse or forward. In both deployments the OS only ever
-//! sends it names under the suffix (dnsmasq `server=/ps.internal/...` on Linux,
-//! `/etc/resolver/ps.internal` on macOS), so anything else gets empty NOERROR.
+//! sends it names under the suffix (dnsmasq `server=/pai-sho/...` on Linux,
+//! `/etc/resolver/pai-sho` on macOS), so anything else gets empty NOERROR.
 //!
-//! `.internal` is ICANN-reserved for private use, so the suffix can never
-//! collide with a public name (unlike a bare `.ps`, the Palestinian ccTLD).
-//! See docs/adr/0004-peer-surfaces.md and 0005.
+//! `.pai-sho` is an invented private suffix, not the bare `.ps` (the live
+//! Palestinian ccTLD, which would shadow real names). It resolves only through
+//! our own resolver/dnsmasq/hosts, never public DNS. See ADR 0005.
 
 use crate::peer::PeerManager;
 use anyhow::{Context, Result};
@@ -20,8 +20,8 @@ use tokio::net::UdpSocket;
 use tracing::{info, warn};
 
 /// The suffix this resolver is authoritative for, without a leading dot.
-/// `.internal` is ICANN-reserved for private use (never publicly delegated).
-pub const SUFFIX: &str = "ps.internal";
+/// An invented private suffix; resolves only via our own resolver, never public DNS.
+pub const SUFFIX: &str = "pai-sho";
 
 /// Bind a UDP resolver at `listen` and answer `*.<SUFFIX>` from `peers`.
 pub async fn run(listen: SocketAddr, peers: Arc<PeerManager>) -> Result<()> {
@@ -69,7 +69,7 @@ async fn handle_query(query: &[u8], peers: &Arc<PeerManager>) -> Option<Vec<u8>>
     Some(build_reply(query, q.qend, answer))
 }
 
-/// Build a reply for `query` synchronously, resolving `.ps.internal` names through
+/// Build a reply for `query` synchronously, resolving `.pai-sho` names through
 /// `resolve`. Used by the in-stack (TUN) resolver, which holds the name->ip
 /// map directly. Returns None only if the query is malformed.
 pub fn reply<F: FnOnce(&str) -> Option<std::net::Ipv4Addr>>(
@@ -197,23 +197,23 @@ mod tests {
 
     #[test]
     fn parses_a_query() {
-        let q = parse_question(&query_for("vibenv-ndyg.ps.internal")).unwrap();
-        assert_eq!(q.name, "vibenv-ndyg.ps.internal");
+        let q = parse_question(&query_for("vibenv-ndyg.pai-sho")).unwrap();
+        assert_eq!(q.name, "vibenv-ndyg.pai-sho");
         assert_eq!(q.qtype, TYPE_A);
     }
 
     #[test]
     fn host_label_strips_suffix() {
-        assert_eq!(host_label("vibenv-ndyg.ps.internal"), Some("vibenv-ndyg"));
-        assert_eq!(host_label("broker.ps.internal"), Some("broker"));
-        assert_eq!(host_label("a.b.ps.internal"), None); // only single-label names
+        assert_eq!(host_label("vibenv-ndyg.pai-sho"), Some("vibenv-ndyg"));
+        assert_eq!(host_label("broker.pai-sho"), Some("broker"));
+        assert_eq!(host_label("a.b.pai-sho"), None); // only single-label names
         assert_eq!(host_label("nope.com"), None);
-        assert_eq!(host_label("ps.internal"), None);
+        assert_eq!(host_label("pai-sho"), None);
     }
 
     #[test]
     fn reply_carries_the_answer() {
-        let query = query_for("broker.ps.internal");
+        let query = query_for("broker.pai-sho");
         let q = parse_question(&query).unwrap();
         let reply = build_reply(&query, q.qend, Some(Ipv4Addr::new(127, 0, 1, 5)));
         // header: QR set, ANCOUNT 1
@@ -226,7 +226,7 @@ mod tests {
 
     #[test]
     fn empty_answer_has_no_records() {
-        let query = query_for("gone.ps.internal");
+        let query = query_for("gone.pai-sho");
         let q = parse_question(&query).unwrap();
         let reply = build_reply(&query, q.qend, None);
         assert_eq!(u16::from_be_bytes([reply[6], reply[7]]), 0); // ANCOUNT 0

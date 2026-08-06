@@ -17,7 +17,7 @@ Two facts change the tradeoff:
   on the target VMs). The friction that motivated explicit projection was
   macOS-only (extra `lo0` addresses need an alias) plus the `/etc/hosts` write.
 - Encoding a workload's identity in a unique port number is worse than encoding
-  it in a name. `vibenv-ndyg.ps.internal:42200` and `vibenv-goo-test.ps.internal:42200` reading the
+  it in a name. `vibenv-ndyg.pai-sho:42200` and `vibenv-goo-test.pai-sho:42200` reading the
   same role port, disambiguated by name, beats a scarce per-VM port.
 
 ## Decision
@@ -29,16 +29,16 @@ automatic again. `project` / `unproject` remain as the override: pin a specific
 address, rename, or toggle a peer off.
 
 **Names come from an owned resolver, not `/etc/hosts`.** The daemon serves a small
-authoritative resolver from the live surface table: `<label>.ps.internal` resolves to that
+authoritative resolver from the live surface table: `<label>.pai-sho` resolves to that
 surface's address and stops resolving when it goes away. This replaces the
 `/etc/hosts` writing from 0004, which needed root on every change and could not
 run as the unprivileged `app` user inside a VM.
 
-The resolver is authoritative for `.ps.internal` and **nothing else**. It never recurses or
-forwards; a query outside `.ps.internal` gets an empty answer. dnsmasq stays the front door
-in the VMs, splitting `.ps.internal` to this resolver and sending everything else upstream.
-Keeping the resolver `.ps.internal`-only is deliberate: a bug or compromise in it can only
-affect `.ps.internal` name resolution, not all DNS on the box. pai-sho never touches
+The resolver is authoritative for `.pai-sho` and **nothing else**. It never recurses or
+forwards; a query outside `.pai-sho` gets an empty answer. dnsmasq stays the front door
+in the VMs, splitting `.pai-sho` to this resolver and sending everything else upstream.
+Keeping the resolver `.pai-sho`-only is deliberate: a bug or compromise in it can only
+affect `.pai-sho` name resolution, not all DNS on the box. pai-sho never touches
 `/etc/resolv.conf`; dnsmasq owns that.
 
 **The resolver listens on a fixed owned address, at port 53 under TUN.** Once the
@@ -49,12 +49,12 @@ in its userspace stack, so it needs no `CAP_NET_BIND_SERVICE` and cannot collide
 with any other listener. It rides the one `CAP_NET_ADMIN` the tun already costs.
 This drops the port suffix everywhere downstream:
 
-- Linux dnsmasq: `server=/ps.internal/<owned-ip>` (no `#5353`).
-- macOS: `/etc/resolver/ps.internal` with `nameserver <owned-ip>` (no `port` line).
+- Linux dnsmasq: `server=/pai-sho/<owned-ip>` (no `#5353`).
+- macOS: `/etc/resolver/pai-sho` with `nameserver <owned-ip>` (no `port` line).
 
 Before the TUN backend exists, the interim resolver is a real UDP socket on
 `127.0.0.1:5353` (a high port, so still no privilege), bridged by dnsmasq
-`server=/ps.internal/127.0.0.1#5353`. The `--resolver <addr>` flag is the same either way;
+`server=/pai-sho/127.0.0.1#5353`. The `--resolver <addr>` flag is the same either way;
 only the address and whether the answer comes from a real socket or the stack
 change.
 
@@ -74,29 +74,33 @@ stays as the fallback when `/dev/net/tun` is absent, so a no-TUN VM still works.
   identity, but the pai-sho-exposed role port can be constant across VMs, since the
   name and address disambiguate. That simplification lives in the provisioning
   stack, not here.
-- pai-sho stays a good DNS citizen: authoritative for `.ps.internal` only, never recursing
+- pai-sho stays a good DNS citizen: authoritative for `.pai-sho` only, never recursing
   and never seizing `/etc/resolv.conf`. dnsmasq remains in the VMs as the front
   door, and wiring it to the resolver is the provisioning stack's job.
 
-## Suffix: why `.ps.internal`
+## Suffix: why `.pai-sho`
 
-The suffix is `.ps.internal`, not a bare `.ps`. `.ps` is the live Palestinian
-ccTLD, so using it would shadow a real public TLD on any box pointed at the
-resolver (genuine `*.ps` names unreachable, internal names leaking outward on a
-split misfire). `.internal` is ICANN-reserved for private use (July 2024, the DNS
-equivalent of `192.168/16`) and can never be delegated publicly, so `.ps.internal`
-keeps the pai-sho mnemonic with zero collision, forever. Unlike Tailscale's
-`.ts.net`, we register and run no domain, because our names are internal-only;
-public TLS stays on `*.cross.stream` via caddy. The cost is that `.ps.internal`
-names cannot get public-CA certs, which is a non-issue for internal reach.
+The suffix is `.pai-sho`, not the bare `.ps` we first reached for. `.ps` is the
+live Palestinian ccTLD, so it would shadow a real public TLD on any box pointed
+at the resolver (genuine `*.ps` names unreachable, internal names leaking on a
+split misfire). `.pai-sho` is an invented single-label suffix: not a current TLD,
+and a hyphenated brand string ICANN is not going to delegate, so the collision
+risk is practically nil. It is not the permanent guarantee `.internal` (ICANN's
+reserved private-use TLD) gives; we took the short branded form over
+`pai-sho.internal` for readability, accepting "no one will register it" instead
+of "can never be registered." The mesh is internal-only, names resolve solely
+through our own resolver, dnsmasq, and `/etc/hosts`, never public DNS, so even a
+future collision would affect only us and we would rename. Unlike Tailscale's
+`.ts.net` we register and run no domain; public TLS stays on `*.cross.stream` via
+caddy, and `.pai-sho` names intentionally cannot get public-CA certs.
 
 ## Tradeoffs
 
 - **macOS `/etc/resolver` for custom suffixes is fragile.** A reported macOS 26
   regression breaks `/etc/resolver/<domain>` for non-public TLDs. Since the Mac
-  operator resolves `.ps.internal` this way, verify it on the target macOS
+  operator resolves `.pai-sho` this way, verify it on the target macOS
   version early; the fallback is a local forwarder (dnsmasq-style) rather than
   `/etc/resolver`.
-- **Name integrity rests on the enrollment label.** `<label>.ps.internal` is
+- **Name integrity rests on the enrollment label.** `<label>.pai-sho` is
   trustworthy only because the operator mints the label into the token, not the
   peer. If a peer could set its own label it could claim another surface's name.

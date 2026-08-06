@@ -1,7 +1,7 @@
 //! TUN owned-network backend (userspace stack). See docs/adr/0005.
 //!
 //! The operator owns one TUN and a subnet routed to it. This module runs a
-//! smoltcp userspace stack on that TUN: it answers `.ps.internal` DNS on the resolver
+//! smoltcp userspace stack on that TUN: it answers `.pai-sho` DNS on the resolver
 //! address in-stack (no socket bind, no privilege), and accepts TCP to each
 //! projected surface address, handing every connection to the daemon to splice
 //! onto the peer's QUIC tunnel.

@@ -62,11 +62,11 @@ restores on its own, no new token needed.
 
 The VM is **auto-projected** on enrollment: it gets its own local address, and its
 ports bind there under the name it enrolled with. With the daemon serving its
-resolver (`--resolver 127.0.0.1:5353`) and the OS pointed at it for `.ps.internal`, both
+resolver (`--resolver 127.0.0.1:5353`) and the OS pointed at it for `.pai-sho`, both
 ports answer by name:
 
 ```sh
-# vm.ps.internal:3001 and vm.ps.internal:7331 are reachable, no manual step
+# vm.pai-sho:3001 and vm.pai-sho:7331 are reachable, no manual step
 ```
 
 Every port a VM exposes binds under that one address, so a second VM's `:3001`
@@ -82,7 +82,7 @@ pai-sho expose 3002
 ```
 
 Because `vm` is already projected, `3002` binds under it too, immediately at
-`http://vm.ps.internal:3002` in my browser. Done with it? `pai-sho unexpose 3002`.
+`http://vm.pai-sho:3002` in my browser. Done with it? `pai-sho unexpose 3002`.
 
 ## Install
 
@@ -133,7 +133,7 @@ list                       Show peers, grants, and bindings (JSON)
 | `--enroll` | | One-time token to present to the `-a` peers |
 | `--key` | `~/.local/state/pai-sho/key` | Secret key path (created if missing) |
 | `--socket` | `/tmp/pai-sho.sock` | Unix socket path |
-| `--resolver` | | Serve the owned `*.ps.internal` resolver on this UDP address (e.g. `127.0.0.1:5353`) |
+| `--resolver` | | Serve the owned `*.pai-sho` resolver on this UDP address (e.g. `127.0.0.1:5353`) |
 
 ## How it works
 
@@ -165,10 +165,10 @@ same port without colliding, so every peer can use the same port for the same jo
 `--as`), `unproject` takes a surface down, and projections persist across a restart
 ([ADR 0004](docs/adr/0004-peer-surfaces.md)).
 
-**Resolver.** With `--resolver`, the daemon answers `<name>.ps.internal` from the live
-surface table, so `vibenv-ndyg.ps.internal` reaches that peer's ports. It is authoritative
+**Resolver.** With `--resolver`, the daemon answers `<name>.pai-sho` from the live
+surface table, so `vibenv-ndyg.pai-sho` reaches that peer's ports. It is authoritative
 for one suffix and never touches the system resolver; you point the OS at it for
-`.ps.internal` only (`/etc/resolver/ps.internal` on macOS, a dnsmasq `server=/ps.internal/...` forward on
+`.pai-sho` only (`/etc/resolver/pai-sho` on macOS, a dnsmasq `server=/pai-sho/...` forward on
 Linux). See [ADR 0005](docs/adr/0005-auto-project-and-owned-resolver.md).
 
 **Reconnection.** If the connection drops, both sides reconnect with exponential
