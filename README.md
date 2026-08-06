@@ -56,10 +56,23 @@ pai-sho daemon -a 5hc4bjqfp6booceusm3jrfebbegyfi6aiqwbgx4xxqmpvg5usoyq \
     -e 3001,7331 --enroll 7fd25613dd5e17cb...
 ```
 
-The VM enrolls under the label `vm`, and `localhost:3001` and `localhost:7331` on
-my laptop reach it -- and only my laptop; anyone else who dials the VM is refused.
-Close the laptop, reopen it, and the connection restores on its own, no new token
-needed.
+The VM enrolls under the label `vm`, and only my laptop can reach it; anyone else
+who dials the VM is refused. Close the laptop, reopen it, and the connection
+restores on its own, no new token needed.
+
+The VM is **auto-projected** on enrollment: it gets its own local address, and its
+ports bind there under the name it enrolled with. With the daemon serving its
+resolver (`--resolver 127.0.0.1:5353`) and the OS pointed at it for `.pai-sho`, both
+ports answer by name:
+
+```sh
+# vm.pai-sho:3001 and vm.pai-sho:7331 are reachable, no manual step
+```
+
+Every port a VM exposes binds under that one address, so a second VM's `:3001`
+never collides with this one, and every VM can use the same port for the same job.
+`project` is the override when you want to pin an address or rename; `unproject`
+takes a surface down.
 
 Spin up something new on the VM and expose it live:
 
@@ -68,8 +81,8 @@ http-nu :3002 -c '{|req| "hello from a new experiment"}'
 pai-sho expose 3002
 ```
 
-It's immediately at `http://localhost:3002` in my browser. Done with it?
-`pai-sho unexpose 3002`.
+Because `vm` is already projected, `3002` binds under it too, immediately at
+`http://vm.pai-sho:3002` in my browser. Done with it? `pai-sho unexpose 3002`.
 
 ## Install
 
@@ -104,6 +117,9 @@ add-peer <ticket>          Connect to a peer
 remove-peer <ticket>       Disconnect from a peer (and drop its pin)
 expose <port> [--to <key>] Grant a local port to peers (default: all known)
 unexpose <port> [--to <k>] Revoke grants for a port (or one peer's grant)
+project <peer> [--ip <a>] [--as <name>]  Bind a peer's ports at a local address
+unproject <peer>           Take a peer's surface down (unbind its ports)
+surfaces                   Show each peer and its projection (JSON)
 list                       Show peers, grants, and bindings (JSON)
 ```
 
@@ -117,6 +133,7 @@ list                       Show peers, grants, and bindings (JSON)
 | `--enroll` | | One-time token to present to the `-a` peers |
 | `--key` | `~/.local/state/pai-sho/key` | Secret key path (created if missing) |
 | `--socket` | `/tmp/pai-sho.sock` | Unix socket path |
+| `--resolver` | | Serve the owned `*.pai-sho` resolver on this UDP address (e.g. `127.0.0.1:5353`) |
 
 ## How it works
 
@@ -136,12 +153,26 @@ under the token's label and is then spent; pins persist across restarts, so a re
 does not orphan enrolled workloads ([ADR 0002](docs/adr/0002-token-enrollment.md)).
 
 **Forwarding.** Each peer is announced only the ports granted to it. When a peer
-grants you port 3001, a local TCP listener binds `127.0.0.1:3001` on your side, and
-traffic runs over the encrypted QUIC connection. It works both ways -- something
-running locally on `:4001` becomes reachable on the peer with `pai-sho expose 4001`.
+announces a granted port it is auto-projected: it gets a local address and its
+ports bind there, reachable without a manual step. Traffic runs over the encrypted
+QUIC connection. It works both ways -- something running locally on `:4001` becomes
+reachable on the peer with `pai-sho expose 4001`.
+
+**Surfaces.** A peer's ports are addressed as a unit at one local IP, named after
+its enrollment label. Because each peer owns its address, two peers can expose the
+same port without colliding, so every peer can use the same port for the same job.
+`project` overrides the auto-assignment (pin an address with `--ip`, rename with
+`--as`), `unproject` takes a surface down, and projections persist across a restart
+([ADR 0004](docs/adr/0004-peer-surfaces.md)).
+
+**Resolver.** With `--resolver`, the daemon answers `<name>.pai-sho` from the live
+surface table, so `vibenv-ndyg.pai-sho` reaches that peer's ports. It is authoritative
+for one suffix and never touches the system resolver; you point the OS at it for
+`.pai-sho` only (`/etc/resolver/pai-sho` on macOS, a dnsmasq `server=/pai-sho/...` forward on
+Linux). See [ADR 0005](docs/adr/0005-auto-project-and-owned-resolver.md).
 
 **Reconnection.** If the connection drops, both sides reconnect with exponential
-backoff. Existing bindings stay in place and resume when the link comes back.
+backoff. Projected surfaces stay in place and rebind when the link comes back.
 
 ## See also
 

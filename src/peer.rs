@@ -7,26 +7,27 @@
 
 use crate::enroll::{Pins, Tokens};
 use crate::grants::Grants;
-use crate::protocol::{BindingInfo, PeerInfo, PeerMessage, ALPN};
+use crate::netstack::{Accept, NetStack};
+use crate::protocol::{BindingInfo, PeerInfo, PeerMessage, SurfaceInfo, ALPN};
+use crate::surface::{self, Surface, SurfaceStore};
 use crate::tunnel::{self, PeerConnection};
 use anyhow::{anyhow, Context, Result};
 use dashmap::DashMap;
 use iroh::endpoint::Connection;
 use iroh::{Endpoint, EndpointId};
 
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{Mutex, Notify, RwLock};
+use tokio::io::AsyncWriteExt;
+use tokio::sync::{mpsc, Mutex, Notify, RwLock};
 use tracing::{error, info, warn};
 
 const BACKOFF_INITIAL: Duration = Duration::from_secs(1);
 const BACKOFF_MAX: Duration = Duration::from_secs(60);
 /// How long an unknown incoming peer gets to present its enrollment token
 const ENROLL_TIMEOUT: Duration = Duration::from_secs(10);
-/// How long a probed connection gets to prove it is alive
-const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Info about a connected peer
 struct Peer {
@@ -41,6 +42,9 @@ struct Peer {
     connection: RwLock<Option<Connection>>,
     /// Ports this peer exposes
     exposed_ports: RwLock<Vec<u16>>,
+    /// Where this peer's ports are bound locally. None until projected: an
+    /// unprojected peer's ports are known but have no listener.
+    surface: RwLock<Option<Surface>>,
     /// Active bindings (local port -> task handle)
     bindings: DashMap<u16, tokio::task::JoinHandle<()>>,
     /// Notified when a new connection replaces the current one
@@ -64,6 +68,7 @@ impl Peer {
             enroll_token,
             connection: RwLock::new(connection),
             exposed_ports: RwLock::new(Vec::new()),
+            surface: RwLock::new(None),
             bindings: DashMap::new(),
             conn_notify: Notify::new(),
             removed: AtomicBool::new(false),
@@ -84,18 +89,26 @@ pub struct PeerManager {
     tokens: Arc<Tokens>,
     /// Peers pinned at enrollment, persisted across restarts
     pins: Pins,
-    /// Serializes binding creation/teardown so cross-peer port collision
-    /// checks and the binds that follow them are atomic
+    /// Projected surfaces, persisted across restarts
+    surfaces: SurfaceStore,
+    /// TUN owned-network backend. When present, surfaces bind on the TUN via a
+    /// userspace stack instead of loopback (ADR 0005); None = loopback backend.
+    netstack: Option<NetStack>,
+    /// Serializes binding creation/teardown and surface changes so a port's
+    /// listener state and the address it binds move together
     bind_lock: Mutex<()>,
 }
 
 impl PeerManager {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         endpoint: Endpoint,
         host: IpAddr,
         grants: Arc<RwLock<Grants>>,
         tokens: Arc<Tokens>,
         pins: Pins,
+        surfaces: SurfaceStore,
+        netstack: Option<NetStack>,
     ) -> Self {
         Self {
             peers: DashMap::new(),
@@ -104,6 +117,8 @@ impl PeerManager {
             grants,
             tokens,
             pins,
+            surfaces,
+            netstack,
             bind_lock: Mutex::new(()),
         }
     }
@@ -358,13 +373,12 @@ impl PeerManager {
         tunnel::handle_tunnel(host, port, send, recv).await
     }
 
-    /// Update peer's exposed ports and manage bindings.
+    /// Update a peer's announced ports and reconcile its bindings.
     ///
-    /// Cross-peer port collisions are resolved here, atomically under the
-    /// bind lock: if another peer already holds an announced port, probe
-    /// it -- a live holder wins (the announcer is booted entirely), a
-    /// stale one is fully evicted and the announcer's bind proceeds in
-    /// the same pass.
+    /// Bindings exist only while the peer is projected: with a surface, each
+    /// announced port binds under the surface's IP; without one, the ports are
+    /// recorded but nothing is bound. A unique IP per surface means no two
+    /// peers ever contend for an address, so there is no collision to arbitrate.
     async fn update_peer_ports(self: &Arc<Self>, peer: &Arc<Peer>, new_ports: Vec<u16>) {
         let _guard = self.bind_lock.lock().await;
 
@@ -372,115 +386,182 @@ impl PeerManager {
         let old_ports = peer.exposed_ports.read().await.clone();
         for port in &old_ports {
             if !new_ports.contains(port) {
-                Self::release_binding(peer, *port).await;
+                self.release_binding(peer, *port).await;
             }
         }
 
-        // Create bindings for new ports. A port with no binding is retried
-        // on every announce -- a failed bind never leaves a phantom entry.
+        // Bind newly announced ports. A peer with no surface is auto-projected
+        // on its first announced port: allocate an address, name it after the
+        // peer's label, and bind there. This is the default path, so reach is
+        // automatic again; explicit `project` only overrides the address/name.
+        let ip = match self.surface_ip(peer, &new_ports).await {
+            Some(ip) => ip,
+            None => {
+                *peer.exposed_ports.write().await = new_ports;
+                return;
+            }
+        };
         for &port in &new_ports {
             if peer.bindings.contains_key(&port) {
                 continue;
             }
-
-            if let Some(holder) = self.find_holder(port, &peer.endpoint_id) {
-                if Self::probe_peer(&holder).await {
-                    // Realistic cause: our own launcher double-issued the
-                    // port number. Be loud; boot the announcer entirely.
-                    error!(
-                        "rejected incoming peer {}: port {} already held by connected peer {} (\"{}\")",
-                        peer.endpoint_id,
-                        port,
-                        holder.endpoint_id,
-                        holder.label.as_deref().unwrap_or("-")
-                    );
-                    self.evict(&peer.endpoint_id, "port collision").await;
-                    return;
-                }
-                warn!(
-                    "evicting stale peer {} (\"{}\"): port {} reclaimed by {}",
-                    holder.endpoint_id,
-                    holder.label.as_deref().unwrap_or("-"),
-                    port,
-                    peer.endpoint_id
-                );
-                self.evict(&holder.endpoint_id, "stale, port reclaimed")
-                    .await;
-            }
-
-            // Bind before recording anything; the listener is live from here
-            match tunnel::bind_listener(port).await {
-                Ok(listener) => {
-                    let peer_clone = peer.clone();
-                    let handle = tokio::spawn(async move {
-                        if let Err(e) = tunnel::serve_listener(listener, port, &peer_clone).await {
-                            error!("binding port {} failed: {}", port, e);
-                        }
-                    });
-                    peer.bindings.insert(port, handle);
-                    info!("created binding for port {}", port);
-                }
-                Err(e) => {
-                    error!("binding port {} failed: {}", port, e);
-                }
-            }
+            self.bind_one(peer, ip, port).await;
         }
 
         *peer.exposed_ports.write().await = new_ports;
     }
 
-    /// Another peer (not `exclude`) holding a binding for `port`
-    fn find_holder(&self, port: u16, exclude: &EndpointId) -> Option<Arc<Peer>> {
-        self.peers
-            .iter()
-            .find(|e| e.key() != exclude && e.value().bindings.contains_key(&port))
-            .map(|e| e.value().clone())
-    }
+    /// The address to bind this peer's ports at: its existing surface, or a
+    /// freshly auto-projected one when it has ports to bind and none yet.
+    /// Returns None if there is nothing to bind. Caller holds the bind lock.
+    async fn surface_ip(self: &Arc<Self>, peer: &Arc<Peer>, ports: &[u16]) -> Option<IpAddr> {
+        if let Some(surface) = peer.surface.read().await.as_ref() {
+            return Some(surface.ip);
+        }
+        if ports.is_empty() {
+            return None;
+        }
 
-    /// Is this peer's connection actually alive? A connection can look
-    /// open for up to the QUIC idle timeout after the peer dies, so ask:
-    /// request a tunnel to port 0 (never grantable) and wait for the peer
-    /// to refuse it. Any stream response within PROBE_TIMEOUT means alive.
-    async fn probe_peer(peer: &Arc<Peer>) -> bool {
-        let conn = {
-            let guard = peer.connection.read().await;
-            match guard.as_ref() {
-                Some(conn) if conn.close_reason().is_none() => conn.clone(),
-                _ => return false,
+        let taken = self.projected_ips().await;
+        let ip = match surface::allocate(&taken, self.surface_base()) {
+            Ok(ip) => ip,
+            Err(e) => {
+                error!("cannot auto-project {}: {}", peer.endpoint_id, e);
+                return None;
             }
         };
+        let name = peer.label.clone();
+        if let Err(e) = self.claim_addr(ip, name.clone()) {
+            error!("cannot claim {} for {}: {}", ip, peer.endpoint_id, e);
+            return None;
+        }
 
-        let probe = async {
-            let (mut send, mut recv) = conn.open_bi().await.ok()?;
-            send.write_all(&0u16.to_be_bytes()).await.ok()?;
-            let _ = send.finish();
-            // Alive peers close the stream promptly (ungranted port);
-            // either a clean end or a reset counts as a response
-            let _ = recv.read_to_end(16).await;
-            Some(())
-        };
-
-        let responded = tokio::time::timeout(PROBE_TIMEOUT, probe)
-            .await
-            .ok()
-            .flatten()
-            .is_some();
-        responded && conn.close_reason().is_none()
+        *peer.surface.write().await = Some(Surface {
+            ip,
+            name: name.clone(),
+        });
+        if let Err(e) = self.surfaces.add(&peer.endpoint_id.to_string(), ip, name) {
+            warn!("failed to persist surface for {}: {}", peer.endpoint_id, e);
+        }
+        info!("auto-projected {} to {}", peer.endpoint_id, ip);
+        Some(ip)
     }
 
-    /// Release one binding, waiting for its task to finish so the
-    /// TcpListener is actually dropped before the port is reused
-    async fn release_binding(peer: &Arc<Peer>, port: u16) {
+    /// Bind one forwarded port under `ip` and record the binding. A failed
+    /// bind is logged and leaves no phantom entry, so the next announce retries.
+    async fn bind_one(&self, peer: &Arc<Peer>, ip: IpAddr, port: u16) {
+        // TUN backend: register a listener with the userspace stack. The
+        // accept -> QUIC splice happens in run_netstack_accepts. A resident
+        // placeholder task stands in for the binding so bindings tracking and
+        // release work uniformly with the loopback path.
+        if let Some(ns) = &self.netstack {
+            if let IpAddr::V4(v4) = ip {
+                ns.listen(v4, port);
+                peer.bindings
+                    .insert(port, tokio::spawn(std::future::pending::<()>()));
+                info!("bound {}:{} (tun)", v4, port);
+                return;
+            }
+        }
+
+        let addr = SocketAddr::from((ip, port));
+        match tunnel::bind_listener(addr).await {
+            Ok(listener) => {
+                let peer_clone = peer.clone();
+                let handle = tokio::spawn(async move {
+                    if let Err(e) = tunnel::serve_listener(listener, port, &peer_clone).await {
+                        error!("serving {} failed: {}", addr, e);
+                    }
+                });
+                peer.bindings.insert(port, handle);
+                info!("bound {}", addr);
+            }
+            Err(e) => {
+                error!("failed to bind {}: {}", addr, e);
+            }
+        }
+    }
+
+    /// Release one binding, waiting for its task to finish so the listener is
+    /// actually dropped before the port is reused. On the TUN backend, also
+    /// tells the stack to stop listening (reads the peer's surface for the ip).
+    async fn release_binding(&self, peer: &Arc<Peer>, port: u16) {
         if let Some((_, handle)) = peer.bindings.remove(&port) {
             handle.abort();
             let _ = handle.await;
             info!("removed binding for port {}", port);
         }
+        if let Some(ns) = &self.netstack {
+            if let Some(IpAddr::V4(v4)) = peer.surface.read().await.as_ref().map(|s| s.ip) {
+                ns.unlisten(v4, port);
+            }
+        }
+    }
+
+    /// Claim a surface address: on the TUN backend, add it (and its name) to the
+    /// userspace stack; on loopback, add the OS-level address.
+    fn claim_addr(&self, ip: IpAddr, name: Option<String>) -> Result<()> {
+        if let Some(ns) = &self.netstack {
+            if let IpAddr::V4(v4) = ip {
+                ns.add_surface(v4, name);
+            }
+            return Ok(());
+        }
+        surface::ensure_addr(ip)
+    }
+
+    /// Reverse of `claim_addr`.
+    fn unclaim_addr(&self, ip: IpAddr) -> Result<()> {
+        if let Some(ns) = &self.netstack {
+            if let IpAddr::V4(v4) = ip {
+                ns.remove_surface(v4);
+            }
+            return Ok(());
+        }
+        surface::remove_addr(ip)
+    }
+
+    /// The peer whose surface is bound at `ip` (for routing accepted TUN
+    /// connections back to the owning peer).
+    async fn peer_for_ip(&self, ip: IpAddr) -> Option<Arc<Peer>> {
+        let peers: Vec<Arc<Peer>> = self.peers.iter().map(|e| e.value().clone()).collect();
+        for peer in peers {
+            if peer.surface.read().await.as_ref().map(|s| s.ip) == Some(ip) {
+                return Some(peer);
+            }
+        }
+        None
+    }
+
+    /// Consume accepted TUN connections and splice each onto its peer's tunnel.
+    pub async fn run_netstack_accepts(
+        self: Arc<Self>,
+        mut accepts: mpsc::UnboundedReceiver<Accept>,
+    ) {
+        if self.netstack.is_none() {
+            return;
+        }
+        while let Some(acc) = accepts.recv().await {
+            let ip = IpAddr::V4(acc.ip);
+            let Some(peer) = self.peer_for_ip(ip).await else {
+                warn!(
+                    "accepted {}:{} but no peer owns that surface",
+                    acc.ip, acc.port
+                );
+                continue;
+            };
+            tokio::spawn(async move {
+                if let Err(e) = bridge(peer, acc).await {
+                    warn!("tun bridge ended: {}", e);
+                }
+            });
+        }
     }
 
     /// Fully evict a peer: close its connection, release every binding it
-    /// holds (waiting for the listeners to drop), clear grants naming it,
-    /// and delete its pin. Callers hold the bind lock where it matters.
+    /// holds (waiting for the listeners to drop), tear down its surface, clear
+    /// grants naming it, and delete its pin. Callers hold the bind lock where
+    /// it matters.
     async fn evict(&self, endpoint_id: &EndpointId, reason: &str) {
         if let Some((_, peer)) = self.peers.remove(endpoint_id) {
             peer.removed.store(true, Ordering::Relaxed);
@@ -490,15 +571,26 @@ impl PeerManager {
                 conn.close(0u32.into(), reason.as_bytes());
             }
 
+            // release while the surface is still set so the tun backend can
+            // unlisten by ip
             let ports: Vec<u16> = peer.bindings.iter().map(|e| *e.key()).collect();
             for port in ports {
-                Self::release_binding(&peer, port).await;
+                self.release_binding(&peer, port).await;
+            }
+
+            if let Some(surface) = peer.surface.write().await.take() {
+                if let Err(e) = self.unclaim_addr(surface.ip) {
+                    warn!("failed to remove address {}: {}", surface.ip, e);
+                }
             }
         }
 
         self.grants.write().await.revoke_grantee(endpoint_id);
         if let Err(e) = self.pins.remove(&endpoint_id.to_string()) {
             warn!("failed to remove pin for {}: {}", endpoint_id, e);
+        }
+        if let Err(e) = self.surfaces.remove(&endpoint_id.to_string()) {
+            warn!("failed to remove surface record for {}: {}", endpoint_id, e);
         }
 
         info!("evicted peer {} ({})", endpoint_id, reason);
@@ -551,9 +643,9 @@ impl PeerManager {
 
     /// Wait for an unknown incoming peer to present an enrollment token.
     /// A valid claim pins its key under the token's label and admits it;
-    /// anything else -- no token, bad token, timeout, or a port collision
-    /// with a live peer -- closes the connection without pinning or
-    /// announcing anything.
+    /// no token, a bad token, or a timeout closes the connection without
+    /// pinning or announcing anything. An enrolled peer binds nothing until
+    /// it is projected, so there is no port contention to check here.
     async fn handle_enrollment(self: &Arc<Self>, conn: Connection) -> Result<Option<Arc<Peer>>> {
         let remote_id = conn.remote_id();
 
@@ -586,27 +678,6 @@ impl PeerManager {
                 return Ok(None);
             }
         };
-
-        // Refuse before pinning if an announced port is held by a live
-        // peer. (A stale holder is not evicted here; update_peer_ports
-        // below handles it under the bind lock in this same pass.)
-        if let Some(ports) = &early_ports {
-            for &port in ports {
-                if let Some(holder) = self.find_holder(port, &remote_id) {
-                    if Self::probe_peer(&holder).await {
-                        error!(
-                            "rejected incoming peer {}: port {} already held by connected peer {} (\"{}\")",
-                            remote_id,
-                            port,
-                            holder.endpoint_id,
-                            holder.label.as_deref().unwrap_or("-")
-                        );
-                        conn.close(0u32.into(), b"port collision");
-                        return Ok(None);
-                    }
-                }
-            }
-        }
 
         info!("enrolled {} as \"{}\"", remote_id, label);
         self.pins.add(&remote_id.to_string(), &label)?;
@@ -683,6 +754,231 @@ impl PeerManager {
         }
         result
     }
+
+    /// Resolve a peer reference (an endpoint key or an enrollment label) to a
+    /// key. A key is tried first; a label match is the fallback.
+    fn resolve_peer(&self, peer_ref: &str) -> Option<EndpointId> {
+        if let Ok(id) = peer_ref.parse::<EndpointId>() {
+            if self.peers.contains_key(&id) {
+                return Some(id);
+            }
+        }
+        self.peers
+            .iter()
+            .find(|e| e.value().label.as_deref() == Some(peer_ref))
+            .map(|e| *e.key())
+    }
+
+    /// The /24 to allocate surface addresses from: the TUN subnet when the
+    /// tun backend is active, else the loopback range.
+    fn surface_base(&self) -> [u8; 3] {
+        if self.netstack.is_some() {
+            surface::TUN_BASE
+        } else {
+            surface::LOOPBACK_BASE
+        }
+    }
+
+    /// A snapshot of the addresses currently in use by surfaces.
+    async fn projected_ips(&self) -> Vec<IpAddr> {
+        let peers: Vec<Arc<Peer>> = self.peers.iter().map(|e| e.value().clone()).collect();
+        let mut ips = Vec::new();
+        for peer in peers {
+            if let Some(surface) = peer.surface.read().await.as_ref() {
+                ips.push(surface.ip);
+            }
+        }
+        ips
+    }
+
+    /// Resolve a surface name to its address, for the owned resolver. Matches
+    /// the name a surface was projected under (an enrollment label, or an
+    /// explicit `--as`).
+    pub async fn resolve_name(&self, label: &str) -> Option<IpAddr> {
+        let peers: Vec<Arc<Peer>> = self.peers.iter().map(|e| e.value().clone()).collect();
+        for peer in peers {
+            if let Some(surface) = peer.surface.read().await.as_ref() {
+                if surface.name.as_deref() == Some(label) {
+                    return Some(surface.ip);
+                }
+            }
+        }
+        None
+    }
+
+    /// Project a peer's surface explicitly: pin an address (chosen or
+    /// allocated) and a name, overriding whatever auto-project set. The name is
+    /// served by the owned resolver, so it needs no /etc/hosts write. Ports
+    /// already announced are rebound at the new address.
+    pub async fn project(
+        self: &Arc<Self>,
+        peer_ref: &str,
+        ip: Option<IpAddr>,
+        name: Option<String>,
+    ) -> Result<()> {
+        let id = self
+            .resolve_peer(peer_ref)
+            .ok_or_else(|| anyhow!("no such peer: {}", peer_ref))?;
+        let peer = self
+            .peers
+            .get(&id)
+            .ok_or_else(|| anyhow!("no such peer: {}", peer_ref))?
+            .clone();
+
+        let _guard = self.bind_lock.lock().await;
+
+        // Tear down any existing surface first so a re-project moves cleanly.
+        // Release while the old surface is still set (the tun backend unlistens
+        // by ip), then clear it and drop the address.
+        let old = peer.surface.read().await.clone();
+        if let Some(old) = old {
+            let held: Vec<u16> = peer.bindings.iter().map(|e| *e.key()).collect();
+            for port in held {
+                self.release_binding(&peer, port).await;
+            }
+            *peer.surface.write().await = None;
+            let _ = self.unclaim_addr(old.ip);
+        }
+
+        // Default the name to the peer's label so `project` without --as still
+        // yields a resolvable handle.
+        let name = name.or_else(|| peer.label.clone());
+        let ip = match ip {
+            Some(ip) => ip,
+            None => {
+                let taken = self.projected_ips().await;
+                surface::allocate(&taken, self.surface_base())?
+            }
+        };
+
+        self.claim_addr(ip, name.clone())?;
+        *peer.surface.write().await = Some(Surface {
+            ip,
+            name: name.clone(),
+        });
+        if let Err(e) = self.surfaces.add(&id.to_string(), ip, name) {
+            warn!("failed to persist surface for {}: {}", id, e);
+        }
+
+        let ports = peer.exposed_ports.read().await.clone();
+        for port in ports {
+            if !peer.bindings.contains_key(&port) {
+                self.bind_one(&peer, ip, port).await;
+            }
+        }
+
+        info!("projected {} to {}", id, ip);
+        Ok(())
+    }
+
+    /// Unproject a peer's surface: release every binding, drop the address and
+    /// name. The peer stays connected; only its local reach is torn down.
+    pub async fn unproject(self: &Arc<Self>, peer_ref: &str) -> Result<()> {
+        let id = self
+            .resolve_peer(peer_ref)
+            .ok_or_else(|| anyhow!("no such peer: {}", peer_ref))?;
+        let peer = self
+            .peers
+            .get(&id)
+            .ok_or_else(|| anyhow!("no such peer: {}", peer_ref))?
+            .clone();
+
+        let _guard = self.bind_lock.lock().await;
+
+        let surface = peer.surface.read().await.clone();
+        let surface = match surface {
+            Some(s) => s,
+            None => return Err(anyhow!("peer {} is not projected", peer_ref)),
+        };
+
+        // release while the surface is still set (tun backend unlistens by ip)
+        let ports: Vec<u16> = peer.bindings.iter().map(|e| *e.key()).collect();
+        for port in ports {
+            self.release_binding(&peer, port).await;
+        }
+        *peer.surface.write().await = None;
+
+        self.unclaim_addr(surface.ip)?;
+        if let Err(e) = self.surfaces.remove(&id.to_string()) {
+            warn!("failed to remove surface record for {}: {}", id, e);
+        }
+
+        info!("unprojected {}", id);
+        Ok(())
+    }
+
+    /// List every known peer and its surface (projected or not).
+    pub async fn surfaces(&self) -> Vec<SurfaceInfo> {
+        let peers: Vec<Arc<Peer>> = self.peers.iter().map(|e| e.value().clone()).collect();
+        let mut result = Vec::new();
+        for peer in peers {
+            let surface = peer.surface.read().await.clone();
+            let mut ports: Vec<u16> = peer.bindings.iter().map(|e| *e.key()).collect();
+            ports.sort_unstable();
+            result.push(SurfaceInfo {
+                peer: peer.endpoint_id.to_string(),
+                label: peer.label.clone(),
+                projected: surface.is_some(),
+                ip: surface.as_ref().map(|s| s.ip.to_string()),
+                name: surface.as_ref().and_then(|s| s.name.clone()),
+                ports,
+            });
+        }
+        result
+    }
+
+    /// Re-apply persisted surfaces at startup: restore each address so a
+    /// projected peer keeps its IP and name across a restart. Ports rebind
+    /// when the peer reconnects and re-announces.
+    pub async fn restore_surfaces(self: &Arc<Self>) {
+        let records = match self.surfaces.load() {
+            Ok(records) => records,
+            Err(e) => {
+                warn!("failed to load surfaces: {}", e);
+                return;
+            }
+        };
+
+        for record in records {
+            let id: EndpointId = match record.key.parse() {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            let Some(peer) = self.peers.get(&id) else {
+                continue;
+            };
+            if let Err(e) = self.claim_addr(record.ip, record.name.clone()) {
+                warn!("failed to restore address {}: {}", record.ip, e);
+                continue;
+            }
+            *peer.surface.write().await = Some(Surface {
+                ip: record.ip,
+                name: record.name,
+            });
+        }
+    }
+}
+
+/// Splice one accepted TUN connection onto the peer's QUIC tunnel: client
+/// bytes to the tunnel, tunnel bytes back to the client. Ends when either side
+/// closes.
+async fn bridge(peer: Arc<Peer>, acc: Accept) -> Result<()> {
+    let (mut qs, mut qr) = peer.open_tunnel(acc.port).await?;
+    let (mut client_r, mut client_w) = tokio::io::split(acc.stream);
+
+    let client_to_quic = async {
+        let _ = tokio::io::copy(&mut client_r, &mut qs).await;
+        let _ = qs.finish();
+    };
+    let quic_to_client = async {
+        let _ = tokio::io::copy(&mut qr, &mut client_w).await;
+        let _ = client_w.shutdown().await;
+    };
+    tokio::select! {
+        _ = client_to_quic => {}
+        _ = quic_to_client => {}
+    }
+    Ok(())
 }
 
 impl PeerConnection for Arc<Peer> {

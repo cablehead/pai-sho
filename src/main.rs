@@ -1,13 +1,16 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 
 mod client;
 mod daemon;
 mod enroll;
 mod grants;
+mod netstack;
 mod peer;
 mod protocol;
+mod resolver;
+mod surface;
 mod tunnel;
 
 #[derive(Parser)]
@@ -45,6 +48,15 @@ pub enum Command {
         /// One-time enrollment token to present to added peers
         #[arg(long)]
         enroll: Option<String>,
+        /// Serve the owned `*.pai-sho` resolver on this UDP address (e.g.
+        /// 127.0.0.1:5353). Off when omitted.
+        #[arg(long)]
+        resolver: Option<SocketAddr>,
+        /// Use the TUN owned-network backend on this pre-created device (e.g.
+        /// `ps0`). Surfaces bind on the TUN via a userspace stack, and the
+        /// `.pai-sho` resolver answers in-stack on 10.99.0.53:53. Loopback when omitted.
+        #[arg(long)]
+        tun: Option<String>,
     },
 
     /// Add a peer (returns assigned IP)
@@ -99,6 +111,28 @@ pub enum Command {
         #[arg(long)]
         label: String,
     },
+
+    /// Project a peer's surface to a local address so its ports are reachable.
+    /// See docs/adr/0004-peer-surfaces.md.
+    Project {
+        /// Peer to project (an endpoint key or an enrollment label)
+        peer: String,
+        /// Local address to bind at; allocated from 127.0.1.0/24 if omitted
+        #[arg(long)]
+        ip: Option<IpAddr>,
+        /// DNS handle to add in /etc/hosts (e.g. `broker`)
+        #[arg(long = "as")]
+        name: Option<String>,
+    },
+
+    /// Take a peer's surface down: unbind its ports, drop its address and name
+    Unproject {
+        /// Peer to unproject (an endpoint key or an enrollment label)
+        peer: String,
+    },
+
+    /// List surfaces: every known peer and its projection, if any
+    Surfaces,
 }
 
 #[tokio::main]
@@ -121,8 +155,20 @@ async fn main() -> Result<()> {
             ports,
             key_path,
             enroll,
+            resolver,
+            tun,
         } => {
-            daemon::run(host, socket_path, peers, ports, key_path, enroll).await?;
+            daemon::run(
+                host,
+                socket_path,
+                peers,
+                ports,
+                key_path,
+                enroll,
+                resolver,
+                tun,
+            )
+            .await?;
         }
         _ => {
             client::send_command(socket_path, cli.command).await?;

@@ -38,6 +38,19 @@ pub enum Request {
         key: String,
         label: String,
     },
+    /// Project a peer's surface to a local address. `peer` is a key or label;
+    /// `ip` is chosen if given, else allocated; `name` adds a /etc/hosts handle.
+    Project {
+        peer: String,
+        ip: Option<String>,
+        name: Option<String>,
+    },
+    /// Take a peer's surface down: unbind its ports, drop the address and name.
+    Unproject {
+        peer: String,
+    },
+    /// List surfaces (every known peer and its projection, if any)
+    Surfaces,
 }
 
 /// Response from daemon to CLI client
@@ -47,7 +60,24 @@ pub enum Response {
     Ticket(String),
     List(ListInfo),
     Token(String),
+    Surfaces(Vec<SurfaceInfo>),
     Error(String),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SurfaceInfo {
+    /// Peer key this surface belongs to
+    pub peer: String,
+    /// Label assigned at enrollment, if any
+    pub label: Option<String>,
+    /// Whether the peer is currently projected (has a local address)
+    pub projected: bool,
+    /// Local address the surface is bound at (absent when not projected)
+    pub ip: Option<String>,
+    /// DNS handle in /etc/hosts (absent when unnamed or not projected)
+    pub name: Option<String>,
+    /// Ports currently bound under this surface
+    pub ports: Vec<u16>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -1,17 +1,14 @@
 //! Tunnel - TCP <-> QUIC forwarding.
 
 use anyhow::{Context, Result};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{debug, error, info};
 
-const LOCALHOST: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
-
-/// Bind the local listener for a forwarded port. Kept separate from the
-/// accept loop so a failed bind (port already in use) surfaces to the
+/// Bind the local listener for a forwarded port at `addr`. Kept separate from
+/// the accept loop so a failed bind (address already in use) surfaces to the
 /// caller before any binding is recorded.
-pub async fn bind_listener(port: u16) -> Result<TcpListener> {
-    let addr = SocketAddr::from((LOCALHOST, port));
+pub async fn bind_listener(addr: SocketAddr) -> Result<TcpListener> {
     TcpListener::bind(addr)
         .await
         .with_context(|| format!("failed to bind {}", addr))
@@ -22,7 +19,10 @@ pub async fn serve_listener<P>(listener: TcpListener, port: u16, peer: &P) -> Re
 where
     P: PeerConnection + Send + Sync + 'static,
 {
-    info!("listening on 127.0.0.1:{}", port);
+    match listener.local_addr() {
+        Ok(addr) => info!("listening on {}", addr),
+        Err(_) => info!("listening on port {}", port),
+    }
 
     loop {
         let (stream, client_addr) = listener.accept().await?;

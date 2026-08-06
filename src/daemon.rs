@@ -4,6 +4,7 @@ use crate::enroll::{Pins, Tokens};
 use crate::grants::Grants;
 use crate::peer::PeerManager;
 use crate::protocol::{GrantInfo, ListInfo, Request, Response, ALPN};
+use crate::surface::SurfaceStore;
 use anyhow::{anyhow, Context, Result};
 use iroh::{Endpoint, EndpointId, SecretKey};
 use std::net::IpAddr;
@@ -75,7 +76,11 @@ fn load_or_create_key(path: &Path) -> Result<SecretKey> {
 }
 
 impl Daemon {
-    pub async fn new(host: IpAddr, key_path: &Path) -> Result<Arc<Self>> {
+    pub async fn new(
+        host: IpAddr,
+        key_path: &Path,
+        netstack: Option<crate::netstack::NetStack>,
+    ) -> Result<Arc<Self>> {
         let secret_key = load_or_create_key(key_path)?;
 
         let endpoint = Endpoint::builder(iroh::endpoint::presets::N0)
@@ -88,8 +93,13 @@ impl Daemon {
         let grants = Arc::new(RwLock::new(Grants::default()));
         let tokens = Arc::new(Tokens::default());
 
-        // Pins live next to the key: <key>.peers.json
+        // Pins and surfaces live next to the key: <key>.peers.json,
+        // <key>.surfaces.json
         let pins = Pins::new(PathBuf::from(format!("{}.peers.json", key_path.display())));
+        let surfaces = SurfaceStore::new(PathBuf::from(format!(
+            "{}.surfaces.json",
+            key_path.display()
+        )));
         let pinned = pins.load()?;
 
         let daemon = Arc::new(Self {
@@ -99,6 +109,8 @@ impl Daemon {
                 grants.clone(),
                 tokens.clone(),
                 pins,
+                surfaces,
+                netstack,
             )),
             endpoint,
             grants,
@@ -110,6 +122,9 @@ impl Daemon {
                 error!("failed to load pinned peer {}: {}", pin.key, e);
             }
         }
+
+        // Restore projected surfaces onto the pinned peers just loaded.
+        daemon.peers.restore_surfaces().await;
 
         Ok(daemon)
     }
@@ -235,11 +250,30 @@ impl Daemon {
                 Ok(()) => Response::Ok,
                 Err(e) => Response::Error(e.to_string()),
             },
+            Request::Project { peer, ip, name } => {
+                let ip = match ip.map(|s| s.parse()).transpose() {
+                    Ok(ip) => ip,
+                    Err(_) => return Response::Error("invalid --ip address".to_string()),
+                };
+                match self.peers.project(&peer, ip, name).await {
+                    Ok(()) => Response::Ok,
+                    Err(e) => Response::Error(e.to_string()),
+                }
+            }
+            Request::Unproject { peer } => match self.peers.unproject(&peer).await {
+                Ok(()) => Response::Ok,
+                Err(e) => Response::Error(e.to_string()),
+            },
+            Request::Surfaces => Response::Surfaces(self.peers.surfaces().await),
         }
     }
 }
 
 /// Run the daemon
+/// The TUN backend's reserved resolver address (answers `.pai-sho` on :53 in-stack).
+const TUN_RESOLVER_IP: std::net::Ipv4Addr = std::net::Ipv4Addr::new(10, 99, 0, 53);
+
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     host: IpAddr,
     socket_path: &Path,
@@ -247,15 +281,54 @@ pub async fn run(
     ports: Vec<u16>,
     key_path: Option<PathBuf>,
     enroll: Option<String>,
+    resolver: Option<std::net::SocketAddr>,
+    tun: Option<String>,
 ) -> Result<()> {
     // Clean up old socket
     let _ = std::fs::remove_file(socket_path);
 
+    // Bring up the TUN owned-network backend if requested. Its stream of
+    // accepted connections is spliced onto peer tunnels below.
+    let netstack = match &tun {
+        Some(dev) => match crate::netstack::spawn(dev, TUN_RESOLVER_IP) {
+            Ok((ns, accepts)) => {
+                info!(
+                    "tun backend up on {} (resolver {}:53)",
+                    dev, TUN_RESOLVER_IP
+                );
+                Some((ns, accepts))
+            }
+            Err(e) => {
+                error!("tun backend failed on {}: {}", dev, e);
+                None
+            }
+        },
+        None => None,
+    };
+    let ns_handle = netstack.as_ref().map(|(ns, _)| ns.clone());
+
     let key_path = key_path.unwrap_or_else(default_key_path);
-    let daemon = Daemon::new(host, &key_path).await?;
+    let daemon = Daemon::new(host, &key_path, ns_handle).await?;
 
     println!("Ticket: {}", daemon.ticket());
     info!("daemon started, host={}, key={}", host, key_path.display());
+
+    // Splice accepted TUN connections onto peer tunnels.
+    if let Some((_, accepts)) = netstack {
+        let peers = daemon.peers.clone();
+        tokio::spawn(async move { peers.run_netstack_accepts(accepts).await });
+    }
+
+    // Serve the loopback owned resolver, if requested (independent of --tun,
+    // which serves its own resolver in-stack).
+    if let Some(listen) = resolver {
+        let peers = daemon.peers.clone();
+        tokio::spawn(async move {
+            if let Err(e) = crate::resolver::run(listen, peers).await {
+                error!("resolver stopped: {}", e);
+            }
+        });
+    }
 
     // -e ports are granted to the -a peers: expose these ports to those
     // peers, and to no one else
@@ -295,15 +368,48 @@ pub async fn run(
 
     info!("listening on {:?}", socket_path);
 
-    loop {
-        let (stream, _) = listener.accept().await?;
-        let daemon = daemon.clone();
-        tokio::spawn(async move {
-            if let Err(e) = handle_client(stream, daemon).await {
-                error!("client error: {}", e);
-            }
-        });
+    // Serve CLI commands until asked to stop. Racing the accept loop against a
+    // shutdown signal lets a supervisor (launchd, brew services) stop the daemon
+    // cleanly; on exit the TUN fd closes and the kernel removes the utun and its
+    // route. See cablehead/xs#150, cablehead/http-nu#53.
+    let socket_loop = async {
+        loop {
+            let (stream, _) = listener.accept().await?;
+            let daemon = daemon.clone();
+            tokio::spawn(async move {
+                if let Err(e) = handle_client(stream, daemon).await {
+                    error!("client error: {}", e);
+                }
+            });
+        }
+        #[allow(unreachable_code)]
+        Ok::<(), anyhow::Error>(())
+    };
+
+    tokio::select! {
+        r = socket_loop => r?,
+        _ = shutdown_signal() => info!("shutdown signal received, stopping"),
     }
+    Ok(())
+}
+
+/// Resolve when the process is asked to terminate. Handles both SIGINT (Ctrl-C)
+/// and SIGTERM: supervisors (launchd, brew services, systemd) send SIGTERM, so
+/// a daemon that traps only SIGINT is hard-killed and skips orderly shutdown.
+/// Modeled on cablehead/xs#150 and cablehead/http-nu#53.
+#[cfg(unix)]
+async fn shutdown_signal() {
+    use tokio::signal::unix::{signal, SignalKind};
+    let mut sigterm = signal(SignalKind::terminate()).expect("install SIGTERM handler");
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = sigterm.recv() => {}
+    }
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() {
+    let _ = tokio::signal::ctrl_c().await;
 }
 
 async fn handle_client(stream: UnixStream, daemon: Arc<Daemon>) -> Result<()> {
