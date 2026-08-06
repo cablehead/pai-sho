@@ -409,7 +409,8 @@ impl PeerManager {
             }
 
             // Bind before recording anything; the listener is live from here
-            match tunnel::bind_listener(port).await {
+            let bind_addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+            match tunnel::bind_listener(bind_addr).await {
                 Ok(listener) => {
                     let peer_clone = peer.clone();
                     let handle = tokio::spawn(async move {
