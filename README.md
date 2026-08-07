@@ -36,7 +36,8 @@ siblings invisible to each other.
 The case it was built for: a dedicated VM per task -- a
 [vibenv](https://github.com/cablehead/vibenv.dag) -- with no inbound ports. Boot it,
 it dials your laptop, and the two or three ports you care about (a web app, a
-live-reload server, a terminal) show up on `localhost`, reachable by you alone.
+live-reload server, a terminal) come up under its own name, reachable by you
+alone, like `vm.pai-sho:3001`.
 
 ## Example
 
