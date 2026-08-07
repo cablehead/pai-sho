@@ -86,11 +86,13 @@ async fn forward_bidirectional(
     Ok(())
 }
 
-/// Copy from `reader` to `writer`, flushing after every chunk. `tokio::io::copy`
-/// buffers up to ~8KB before flushing, which adds latency to interactive traffic
-/// (a keystroke over a forwarded PTY). Flushing each write keeps small packets
-/// moving. Pattern from n0-computer/pigeons (https://github.com/n0-computer/pigeons),
-/// the iroh team's SSH-over-iroh tool.
+/// Copy from `reader` to `writer`, flushing after every chunk. Pattern from
+/// n0-computer/pigeons (https://github.com/n0-computer/pigeons), the iroh team's
+/// SSH-over-iroh tool. It forces each piece onto the wire instead of letting a
+/// writer coalesce. Measured against plain `tokio::io::copy` on a Mac-to-Hetzner
+/// forward, this changed nothing: the wide-area hop is QUIC (no Nagle) and the
+/// TCP sockets are on localhost, so there was no coalescing delay to remove. Kept
+/// because it is cheap and starts to matter once a forwarded hop is not localhost.
 pub async fn copy_flush<R, W>(reader: &mut R, writer: &mut W) -> std::io::Result<u64>
 where
     R: AsyncRead + Unpin,
