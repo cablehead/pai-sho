@@ -40,8 +40,8 @@ live-reload server, a terminal) show up on `localhost`, reachable by you alone.
 
 ## Example
 
-On my laptop the daemon is already running. Its ticket is stable, so I look it up
-once, and I mint a one-time token for the VM I'm about to boot:
+On my laptop the daemon is already running. I print its ticket and mint a
+one-time token for the VM I'm about to boot:
 
 ```sh
 pai-sho ticket
