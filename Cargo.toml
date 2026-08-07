@@ -1,6 +1,6 @@
 [package]
 name = "pai-sho"
-version = "0.4.0"
+version = "0.4.1-dev"
 edition = "2021"
 description = "Drop one binary on a box with no way in. It dials home and punches through, so its ports show up on your laptop, each under its own name. Encrypted, peer-to-peer, default deny."
 license = "MIT"
