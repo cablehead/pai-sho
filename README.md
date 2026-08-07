@@ -73,7 +73,7 @@ ports answer by name:
 ```
 
 Every port a VM exposes binds under that one address, so a second VM's `:3001`
-never collides with this one, and every VM can use the same port for the same job.
+doesn't collide with this one, and every VM can use the same port for the same job.
 `project` is the override when you want to pin an address or rename; `unproject`
 takes a surface down.
 
