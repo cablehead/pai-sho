@@ -6,7 +6,7 @@
 
 <p align="center">
   Encrypted peer-to-peer port forwarding for machines with no open ports.<br>
-  Default deny -- every port granted to exactly the peer you choose.
+  Default deny: every port granted to exactly the peer you choose.
 </p>
 
 <p align="center">
@@ -21,28 +21,36 @@
   </a>
 </p>
 
-pai-sho forwards specific TCP ports between your machines over an encrypted,
-peer-to-peer QUIC connection (built on [iroh](https://github.com/n0-computer/iroh)).
-Neither machine needs an open inbound port, a public IP, or a relay you run --
-iroh handles discovery, NAT traversal, and relay fallback.
+pai-sho forwards specific TCP ports between your machines over an encrypted
+peer-to-peer QUIC connection, built on
+[iroh](https://github.com/n0-computer/iroh). Neither machine needs an open
+inbound port, a public IP, or a relay you run. iroh handles discovery, NAT
+traversal, and relay fallback.
 
 Access is default deny and per peer. Each machine runs one long-lived daemon with
-a stable identity (a keypair). You grant a specific port to a specific peer's key;
-that peer, and no one else, can reach it. A machine you have not met enrolls with a
-one-time token -- so you can boot a fleet of untrusted workloads that phone home and
-each get exactly the access you granted, with no manual key exchange, and with
-siblings invisible to each other.
+a stable identity, a keypair. You grant a specific port to a specific peer's key,
+and that peer alone can reach it. A machine you have not met enrolls with a
+one-time token, so you can boot a fleet of untrusted workloads that phone home,
+each with exactly the access you granted and none aware of its siblings.
 
-The case it was built for: a dedicated VM per task -- a
-[vibenv](https://github.com/cablehead/vibenv.dag) -- with no inbound ports. Boot it,
-it dials your laptop, and the two or three ports you care about (a web app, a
-live-reload server, a terminal) come up under its own name, reachable by you
-alone, like `vm.pai-sho:3001`.
+The peers you can reach live on a private network the daemon runs for you. Each
+one gets its own address on that network and a name to match, so you reach its
+ports at `peer.pai-sho:<port>`. Two peers can serve the same port without
+clashing, because each has its own address. None of it is published to the rest
+of your machine or the rest of DNS.
+
+The case it was built for is a dedicated VM per task, a
+[vibenv](https://github.com/cablehead/vibenv.dag), with no inbound ports. Boot it,
+it dials your laptop, and the ports you care about (say a web app and a
+live-reload server) come up at `vm.pai-sho:3001` and `vm.pai-sho:7331`, reachable
+by you alone.
 
 ## Example
 
-On my laptop the daemon is already running. I print its ticket and mint a
-one-time token for the VM I'm about to boot:
+On my laptop the daemon is already running on its own network interface (the
+[Homebrew install](#install) sets that up; [Setting up the network](#setting-up-the-network)
+covers doing it by hand). I print its ticket and mint a one-time token for the VM
+I'm about to boot:
 
 ```sh
 pai-sho ticket
@@ -53,30 +61,24 @@ pai-sho grant-token --label vm
 
 The VM runs an [http-nu](https://github.com/cablehead/http-nu) app on `:3001` and
 [stellar](https://github.com/cablehead/stellar) on `:7331` for live CSS editing.
-I start its daemon pointing home, exposing both ports to my laptop:
+Its daemon dials home and exposes both ports to my laptop:
 
 ```sh
 pai-sho daemon -a 5hc4bjqfp6booceusm3jrfebbegyfi6aiqwbgx4xxqmpvg5usoyq \
     -e 3001,7331 --enroll 7fd25613dd5e17cb...
 ```
 
-The VM enrolls under the label `vm`, and only my laptop can reach it; anyone else
-who dials the VM is refused. Close the laptop, reopen it, and the connection
-restores on its own, no new token needed.
+The VM enrolls under the label `vm`, and only my laptop can reach it. Anyone else
+who dials the VM is refused.
 
-The VM is **auto-projected** on enrollment: it gets its own local address, and its
-ports bind there under the name it enrolled with. With the daemon serving its
-resolver (`--resolver 127.0.0.1:5353`) and the OS pointed at it for `.pai-sho`, both
-ports answer by name:
+On enrollment the VM is projected onto my network on its own: it gets an address
+like `10.99.1.2`, and its ports bind there under the name `vm`. Both answer by
+name, with no manual step:
 
 ```sh
-# vm.pai-sho:3001 and vm.pai-sho:7331 are reachable, no manual step
+curl http://vm.pai-sho:3001
+open http://vm.pai-sho:7331
 ```
-
-Every port a VM exposes binds under that one address, so a second VM's `:3001`
-doesn't collide with this one, and every VM can use the same port for the same job.
-`project` is the override when you want to pin an address or rename; `unproject`
-takes a surface down.
 
 Spin up something new on the VM and expose it live:
 
@@ -85,8 +87,11 @@ http-nu :3002 -c '{|req| "hello from a new experiment"}'
 pai-sho expose 3002
 ```
 
-Because `vm` is already projected, `3002` binds under it too, immediately at
-`http://vm.pai-sho:3002` in my browser. Done with it? `pai-sho unexpose 3002`.
+`vm` is already on my network, so `3002` binds under it too, reachable at
+`http://vm.pai-sho:3002` right away. Done with it? `pai-sho unexpose 3002`.
+
+Close the laptop and reopen it: the connection restores on its own, the surface
+rebinds, and no new token is needed.
 
 ## Install
 
@@ -103,6 +108,45 @@ eget cablehead/pai-sho
 ```
 
 Or grab a binary from [releases](https://github.com/cablehead/pai-sho/releases).
+
+The Homebrew install also sets up the private network under a supervisor: it
+brings up the interface, routes `10.99.0.0/16` into it, and points the system at
+the daemon's resolver for `.pai-sho`. After `brew install`, the daemon is running
+and `*.pai-sho` names resolve.
+
+## Setting up the network
+
+`--tun` puts each peer on a private `10.99.0.0/16` network. The daemon sits at
+`10.99.0.1`, peers land on `10.99.1.x`, and the daemon's resolver answers
+`*.pai-sho` in-stack on `10.99.0.53`.
+
+### macOS
+
+The daemon creates the interface, which needs root:
+
+```sh
+sudo pai-sho daemon --tun utun
+echo "nameserver 10.99.0.53" | sudo tee /etc/resolver/pai-sho
+```
+
+### Linux
+
+Create the interface ahead of time and hand it to the daemon's user, so the
+daemon itself runs unprivileged:
+
+```sh
+sudo ip tuntap add dev ps0 mode tun user "$USER"
+sudo ip addr add 10.99.0.1/16 dev ps0
+sudo ip link set ps0 up
+pai-sho daemon --tun ps0
+```
+
+Then send `.pai-sho` to `10.99.0.53`, for example with a dnsmasq
+`server=/pai-sho/10.99.0.53` forward.
+
+Without `--tun`, surfaces fall back to loopback addresses (`127.0.1.x`) and you
+serve the resolver with `--resolver <addr>`. You lose the private network but keep
+the names.
 
 ## Usage
 
@@ -137,61 +181,70 @@ list                       Show peers, grants, and bindings (JSON)
 | `--enroll` | | One-time token to present to the `-a` peers |
 | `--key` | `~/.local/state/pai-sho/key` | Secret key path (created if missing) |
 | `--socket` | `/tmp/pai-sho.sock` | Unix socket path |
-| `--resolver` | | Serve the owned `*.pai-sho` resolver on this UDP address (e.g. `127.0.0.1:5353`) |
+| `--tun` | | Put surfaces on a private TUN network (`utun` on macOS, a pre-created device like `ps0` on Linux); the resolver answers in-stack on `10.99.0.53:53` |
+| `--resolver` | | Loopback mode, an alternative to `--tun`: serve the `*.pai-sho` resolver on this UDP address (e.g. `127.0.0.1:5353`) |
 
 ## How it works
 
-**Identity.** Each daemon has a stable ticket -- an iroh endpoint ID backed by a
-keypair persisted at `--key`. Because it is stable, a launcher can bake one operator
+**Identity.** Each daemon has a stable ticket, an iroh endpoint ID backed by a
+keypair at `--key`. Because it does not change, a launcher can bake one operator
 ticket into every workload it boots.
 
-**Grants.** Access is default deny. A port is exposed by a grant -- `(port) -> peer
-key` -- and served only to the peers named in one. iroh gives the connecting peer's
-key cryptographically, so a grant names a proven identity, not a shareable address:
-you cannot hand out reach by leaking a string
+**Grants.** Access is default deny. A port becomes reachable only through a grant,
+one port to one peer key, served to that peer alone. iroh proves the connecting
+peer's key cryptographically, so a grant names a proven identity, not a shareable
+address. You cannot hand out reach by leaking a string
 ([ADR 0001](docs/adr/0001-directed-grants.md)).
 
-**Enrollment.** An incoming connection from an unknown key is refused unless it
-presents a one-time token minted by `grant-token`. A valid claim pins the peer's key
-under the token's label and is then spent; pins persist across restarts, so a reboot
-does not orphan enrolled workloads ([ADR 0002](docs/adr/0002-token-enrollment.md)).
+**Enrollment.** A connection from an unknown key is refused unless it carries a
+one-time token from `grant-token`. A valid token pins the peer's key under the
+token's label and is then spent. Pins survive restarts, so a reboot does not
+orphan enrolled workloads ([ADR 0002](docs/adr/0002-token-enrollment.md)). When you
+already know a peer's key, `pin` does the same without a token
+([ADR 0003](docs/adr/0003-host-attested-enrollment.md)).
 
-**Forwarding.** Each peer is announced only the ports granted to it. When a peer
-announces a granted port it is auto-projected: it gets a local address and its
-ports bind there, reachable without a manual step. Traffic runs over the encrypted
-QUIC connection. It works both ways -- something running locally on `:4001` becomes
-reachable on the peer with `pai-sho expose 4001`.
+**Forwarding.** Each peer hears only the ports granted to it, and traffic runs
+over the encrypted QUIC connection. It goes both ways: something on your own
+`:4001` becomes reachable on a peer with `pai-sho expose 4001`.
 
-**Surfaces.** A peer's ports are addressed as a unit at one local IP, named after
-its enrollment label. Because each peer owns its address, two peers can expose the
-same port without colliding, so every peer can use the same port for the same job.
-`project` overrides the auto-assignment (pin an address with `--ip`, rename with
-`--as`), `unproject` takes a surface down, and projections persist across a restart
-([ADR 0004](docs/adr/0004-peer-surfaces.md)).
+**The network.** With `--tun`, the daemon runs its own TCP/IP stack on a private
+network interface. The daemon sits at `10.99.0.1`, peers get addresses on
+`10.99.1.x`, and the resolver answers in-stack on `10.99.0.53:53`. On Linux the
+interface is created ahead of time and owned by the daemon's user, so the daemon
+needs no elevated capability. On macOS the daemon creates a utun itself, which
+needs root.
 
-**Resolver.** With `--resolver`, the daemon answers `<name>.pai-sho` from the live
-surface table, so `vibenv-ndyg.pai-sho` reaches that peer's ports. It is authoritative
-for one suffix and never touches the system resolver; you point the OS at it for
-`.pai-sho` only (`/etc/resolver/pai-sho` on macOS, a dnsmasq `server=/pai-sho/...` forward on
-Linux). See [ADR 0005](docs/adr/0005-auto-project-and-owned-resolver.md).
+**Surfaces.** A peer's ports are addressed together at one address, named after
+its enrollment label. A peer is projected automatically the first time it
+announces a granted port. Because each peer owns its address, two peers can serve
+the same port without colliding. `project` overrides the automatic choice (pin an
+address with `--ip`, rename with `--as`), `unproject` takes a surface down, and
+projections survive a restart ([ADR 0004](docs/adr/0004-peer-surfaces.md)).
 
-**Reconnection.** If the connection drops, both sides reconnect with exponential
-backoff. Projected surfaces stay in place and rebind when the link comes back.
+**Resolver.** The daemon answers `<name>.pai-sho` from the live surface table, so
+`vm.pai-sho` reaches that peer's ports and stops resolving when the peer goes
+away. It is authoritative for the one suffix and never touches the rest of your
+DNS. Point the OS at it for `.pai-sho` only: `/etc/resolver/pai-sho` on macOS, a
+dnsmasq `server=/pai-sho/10.99.0.53` forward on Linux
+([ADR 0005](docs/adr/0005-auto-project-and-owned-resolver.md)).
+
+**Reconnection.** If the connection drops, both sides retry with exponential
+backoff. Projected surfaces stay put and rebind when the link returns.
 
 ## See also
 
 [ngrok](https://ngrok.com) and [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
-are great when you need a public URL anyone can reach. pai-sho is for connecting your
-own machines, or sharing a ticket with a friend so they can see something you're
-working on.
+are great when you need a public URL anyone can reach. pai-sho is for connecting
+your own machines, or sharing a ticket with a friend so they can see something
+you're working on.
 
 [SSH tunnels](https://www.ssh.com/academy/ssh/tunneling) need inbound access on at
 least one side. pai-sho works when neither machine has open inbound ports.
 
 [WireGuard](https://www.wireguard.com/), [Tailscale](https://tailscale.com), and
-[NetBird](https://netbird.io/) are mesh VPNs that give every machine an IP on a
-virtual network. pai-sho is narrower: you expose specific ports, not your whole
-machine, which makes it easier to reason about exactly what is reachable.
+[NetBird](https://netbird.io/) are mesh VPNs that put every machine on a virtual
+network. pai-sho is narrower: you expose specific ports, not the whole machine,
+which keeps it easy to reason about exactly what is reachable.
 
 [dumbpipe](https://github.com/n0-computer/dumbpipe) is the direct inspiration.
 [pigeons](https://pigeons.computer), SSH over iroh from the same team, is where
