@@ -16,6 +16,9 @@
   <a href="https://crates.io/crates/pai-sho">
     <img src="https://img.shields.io/crates/v/pai-sho.svg" alt="Crates">
   </a>
+  <a href="https://discord.com/invite/YNbScHBHrh">
+    <img src="https://img.shields.io/discord/1182364431435436042?logo=discord" alt="Discord">
+  </a>
 </p>
 
 pai-sho forwards specific TCP ports between your machines over an encrypted,
@@ -190,3 +193,7 @@ virtual network. pai-sho is narrower: you expose specific ports, not your whole
 machine, which makes it easier to reason about exactly what is reachable.
 
 [dumbpipe](https://github.com/n0-computer/dumbpipe) is the direct inspiration.
+[pigeons](https://pigeons.computer), SSH over iroh from the same team, is where
+pai-sho's connection handling comes from.
+
+Questions or ideas: come by the [Discord](https://discord.com/invite/YNbScHBHrh).
