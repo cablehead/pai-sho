@@ -202,7 +202,15 @@ fn open_tun(_name: &str) -> Result<RawFd> {
     run("ifconfig", &[&ifname, "10.99.0.1", "10.99.0.2", "up"])?;
     run(
         "route",
-        &["-q", "-n", "add", "-net", "10.99.0.0/16", "-interface", &ifname],
+        &[
+            "-q",
+            "-n",
+            "add",
+            "-net",
+            "10.99.0.0/16",
+            "-interface",
+            &ifname,
+        ],
     )?;
 
     set_nonblocking(fd);
@@ -248,8 +256,7 @@ fn tun_write(fd: RawFd, pkt: &[u8]) -> io::Result<()> {
         let mut framed = Vec::with_capacity(4 + pkt.len());
         framed.extend_from_slice(&af.to_be_bytes());
         framed.extend_from_slice(pkt);
-        let n =
-            unsafe { libc::write(fd, framed.as_ptr() as *const libc::c_void, framed.len()) };
+        let n = unsafe { libc::write(fd, framed.as_ptr() as *const libc::c_void, framed.len()) };
         return if n >= 0 {
             Ok(())
         } else {

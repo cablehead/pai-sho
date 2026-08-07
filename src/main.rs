@@ -57,6 +57,17 @@ pub enum Command {
         /// `.pai-sho` resolver answers in-stack on 10.99.0.53:53. Loopback when omitted.
         #[arg(long)]
         tun: Option<String>,
+        /// Username to own the control socket, chowned right after bind (before
+        /// accept), so the CLI needs no sudo when the daemon runs as root.
+        #[arg(long = "socket-owner")]
+        socket_owner: Option<String>,
+        /// Octal mode for the control socket, e.g. `660` (chmod'd after bind).
+        #[arg(long = "socket-mode")]
+        socket_mode: Option<String>,
+        /// This node's own name; the owned resolver answers `<name>.pai-sho`
+        /// with 127.0.0.1, so local traffic uses the same origin peers do.
+        #[arg(long)]
+        name: Option<String>,
     },
 
     /// Add a peer (returns assigned IP)
@@ -157,6 +168,9 @@ async fn main() -> Result<()> {
             enroll,
             resolver,
             tun,
+            socket_owner,
+            socket_mode,
+            name,
         } => {
             daemon::run(
                 host,
@@ -167,6 +181,9 @@ async fn main() -> Result<()> {
                 enroll,
                 resolver,
                 tun,
+                socket_owner,
+                socket_mode,
+                name,
             )
             .await?;
         }
