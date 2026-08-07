@@ -110,10 +110,9 @@ eget cablehead/pai-sho
 
 Or grab a binary from [releases](https://github.com/cablehead/pai-sho/releases).
 
-The Homebrew install also sets up the private network under a supervisor: it
-brings up the interface, routes `10.99.0.0/16` into it, and points the system at
-the daemon's resolver for `.pai-sho`. After `brew install`, the daemon is running
-and `*.pai-sho` names resolve.
+Homebrew also ships a supervised launch for the operator: a launchd service that
+creates the private network and points the system at the `.pai-sho` resolver. It
+does not start on its own; see [Setting up the network](#setting-up-the-network).
 
 ## Setting up the network
 
@@ -123,10 +122,33 @@ and `*.pai-sho` names resolve.
 
 ### macOS
 
-The daemon creates the interface, which needs root:
+Homebrew ships a supervised launch. Trust the tap as your user (once), then start
+the service:
 
 ```sh
-sudo pai-sho daemon --tun utun
+brew trust cablehead/tap
+sudo --preserve-env=XDG_CONFIG_HOME brew services start pai-sho
+```
+
+`brew trust` records trust for your user. `sudo brew services` is the one root
+use Homebrew allows (it loads a launchd service, runs no build scripts); `sudo
+brew trust` and `sudo brew install` are refused, and that refusal is correct.
+`--preserve-env=XDG_CONFIG_HOME` matters only if you set `XDG_CONFIG_HOME`: plain
+`sudo` strips it, so brew looks for your trust file under `$HOME/.homebrew`
+instead of your real config home and refuses the tap. Preserving it points brew
+back where `brew trust` wrote. (Harmless if you don't set `XDG_CONFIG_HOME`.)
+
+The service creates the utun, points the system at the `.pai-sho` resolver, and
+hands you the control socket, so the CLI needs no sudo:
+
+```sh
+pai-sho ticket
+```
+
+To run it by hand instead of under the supervisor:
+
+```sh
+sudo pai-sho daemon --tun utun --socket-owner "$(stat -f%Su /dev/console)"
 echo "nameserver 10.99.0.53" | sudo tee /etc/resolver/pai-sho
 ```
 
