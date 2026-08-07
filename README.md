@@ -5,8 +5,9 @@
 <h1 align="center">pai-sho</h1>
 
 <p align="center">
-  Encrypted peer-to-peer port forwarding for machines with no open ports.<br>
-  Default deny: every port granted to exactly the peer you choose.
+  Spin up a box in the middle of nowhere, with no way in. Drop one binary on it.<br>
+  No open ports, no public IP: it dials home and punches through.<br>
+  Reach your boxes from your laptop, each under its own name like <code>vibenv-ndyg.pai-sho</code>.
 </p>
 
 <p align="center">
@@ -42,7 +43,7 @@ of your machine or the rest of DNS.
 The case it was built for is a dedicated VM per task, a
 [vibenv](https://github.com/cablehead/vibenv.dag), with no inbound ports. Boot it,
 it dials your laptop, and the ports you care about (say a web app and a
-live-reload server) come up at `vm.pai-sho:3001` and `vm.pai-sho:7331`, reachable
+live-reload server) come up at `vibenv-ndyg.pai-sho:3001` and `vibenv-ndyg.pai-sho:7331`, reachable
 by you alone.
 
 ## Example
@@ -55,7 +56,7 @@ I'm about to boot:
 ```sh
 pai-sho ticket
 # 5hc4bjqfp6booceusm3jrfebbegyfi6aiqwbgx4xxqmpvg5usoyq
-pai-sho grant-token --label vm
+pai-sho grant-token --label vibenv-ndyg
 # 7fd25613dd5e17cb...   (one-time, valid 5 minutes)
 ```
 
@@ -68,16 +69,16 @@ pai-sho daemon -a 5hc4bjqfp6booceusm3jrfebbegyfi6aiqwbgx4xxqmpvg5usoyq \
     -e 3001,7331 --enroll 7fd25613dd5e17cb...
 ```
 
-The VM enrolls under the label `vm`, and only my laptop can reach it. Anyone else
+The VM enrolls under the label `vibenv-ndyg`, and only my laptop can reach it. Anyone else
 who dials the VM is refused.
 
 On enrollment the VM is projected onto my network on its own: it gets an address
-like `10.99.1.2`, and its ports bind there under the name `vm`. Both answer by
+like `10.99.1.2`, and its ports bind there under the name `vibenv-ndyg`. Both answer by
 name, with no manual step:
 
 ```sh
-curl http://vm.pai-sho:3001
-open http://vm.pai-sho:7331
+curl http://vibenv-ndyg.pai-sho:3001
+open http://vibenv-ndyg.pai-sho:7331
 ```
 
 Spin up something new on the VM and expose it live:
@@ -87,8 +88,8 @@ http-nu :3002 -c '{|req| "hello from a new experiment"}'
 pai-sho expose 3002
 ```
 
-`vm` is already on my network, so `3002` binds under it too, reachable at
-`http://vm.pai-sho:3002` right away. Done with it? `pai-sho unexpose 3002`.
+`vibenv-ndyg` is already on my network, so `3002` binds under it too, reachable at
+`http://vibenv-ndyg.pai-sho:3002` right away. Done with it? `pai-sho unexpose 3002`.
 
 Close the laptop and reopen it: the connection restores on its own, the surface
 rebinds, and no new token is needed.
@@ -190,8 +191,8 @@ list                       Show peers, grants, and bindings (JSON)
 keypair at `--key`. Because it does not change, a launcher can bake one operator
 ticket into every workload it boots.
 
-**Grants.** Access is default deny. A port becomes reachable only through a grant,
-one port to one peer key, served to that peer alone. iroh proves the connecting
+**Grants.** Access is default deny. A port becomes reachable only through a grant that names the peers allowed to
+reach it, and is served to them alone. iroh proves the connecting
 peer's key cryptographically, so a grant names a proven identity, not a shareable
 address. You cannot hand out reach by leaking a string
 ([ADR 0001](docs/adr/0001-directed-grants.md)).
@@ -222,7 +223,7 @@ address with `--ip`, rename with `--as`), `unproject` takes a surface down, and
 projections survive a restart ([ADR 0004](docs/adr/0004-peer-surfaces.md)).
 
 **Resolver.** The daemon answers `<name>.pai-sho` from the live surface table, so
-`vm.pai-sho` reaches that peer's ports and stops resolving when the peer goes
+`vibenv-ndyg.pai-sho` reaches that peer's ports and stops resolving when the peer goes
 away. It is authoritative for the one suffix and never touches the rest of your
 DNS. Point the OS at it for `.pai-sho` only: `/etc/resolver/pai-sho` on macOS, a
 dnsmasq `server=/pai-sho/10.99.0.53` forward on Linux
