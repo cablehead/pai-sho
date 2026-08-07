@@ -800,10 +800,11 @@ impl PeerManager {
     /// the name a surface was projected under (an enrollment label, or an
     /// explicit `--as`).
     pub async fn resolve_name(&self, label: &str) -> Option<IpAddr> {
-        // Our own name resolves to loopback (the loopback-backend path; the TUN
-        // backend answers self-name from its in-stack name map).
+        // Our own name resolves to where our services are: the --host forward
+        // address (default 127.0.0.1). The TUN backend answers self-name the
+        // same way, from its in-stack name map.
         if self.self_name.as_deref() == Some(label) {
-            return Some(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+            return Some(self.host);
         }
         let peers: Vec<Arc<Peer>> = self.peers.iter().map(|e| e.value().clone()).collect();
         for peer in peers {

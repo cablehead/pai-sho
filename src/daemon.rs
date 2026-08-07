@@ -345,11 +345,12 @@ pub async fn run(
     };
     let ns_handle = netstack.as_ref().map(|(ns, _)| ns.clone());
 
-    // Self-name: <name>.pai-sho -> 127.0.0.1, so local traffic uses the same
-    // origin peers do (CORS). On the TUN backend the in-stack resolver reads the
-    // name map directly; in loopback mode PeerManager::resolve_name handles it.
-    if let (Some(ns), Some(n)) = (ns_handle.as_ref(), name.as_ref()) {
-        ns.add_surface(std::net::Ipv4Addr::LOCALHOST, Some(n.clone()));
+    // Self-name: <name>.pai-sho resolves to where our own services are (the
+    // --host forward address), so local traffic uses the same origin peers do
+    // (CORS). On the TUN backend the in-stack resolver reads the name map
+    // directly; in loopback mode PeerManager::resolve_name handles it.
+    if let (Some(ns), Some(n), IpAddr::V4(h)) = (ns_handle.as_ref(), name.as_ref(), host) {
+        ns.add_surface(h, Some(n.clone()));
     }
 
     let key_path = key_path.unwrap_or_else(default_key_path);
