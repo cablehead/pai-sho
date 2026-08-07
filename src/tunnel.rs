@@ -89,7 +89,8 @@ async fn forward_bidirectional(
 /// Copy from `reader` to `writer`, flushing after every chunk. `tokio::io::copy`
 /// buffers up to ~8KB before flushing, which adds latency to interactive traffic
 /// (a keystroke over a forwarded PTY). Flushing each write keeps small packets
-/// moving. Pattern from n0-computer/pigeons.
+/// moving. Pattern from n0-computer/pigeons (https://github.com/n0-computer/pigeons),
+/// the iroh team's SSH-over-iroh tool.
 pub async fn copy_flush<R, W>(reader: &mut R, writer: &mut W) -> std::io::Result<u64>
 where
     R: AsyncRead + Unpin,
