@@ -6,6 +6,7 @@ use crate::peer::PeerManager;
 use crate::protocol::{GrantInfo, ListInfo, Request, Response, ALPN};
 use crate::surface::SurfaceStore;
 use anyhow::{anyhow, Context, Result};
+use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{Endpoint, EndpointId, SecretKey};
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
@@ -173,30 +174,6 @@ impl Daemon {
         }
     }
 
-    /// Accept incoming peer connections
-    pub async fn accept_loop(self: Arc<Self>) {
-        loop {
-            match self.endpoint.accept().await {
-                Some(incoming) => {
-                    let this = self.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = this.handle_incoming(incoming).await {
-                            error!("error handling incoming connection: {}", e);
-                        }
-                    });
-                }
-                None => {
-                    info!("endpoint closed");
-                    break;
-                }
-            }
-        }
-    }
-
-    async fn handle_incoming(&self, incoming: iroh::endpoint::Incoming) -> Result<()> {
-        let conn = incoming.accept()?.await?;
-        self.peers.handle_connection(conn).await
-    }
 
     /// Handle a request from the CLI client
     pub async fn handle_request(self: &Arc<Self>, request: Request) -> Response {
@@ -270,6 +247,31 @@ impl Daemon {
 }
 
 /// Run the daemon
+/// Routes incoming pai-sho connections to the peer manager. Handed to iroh's
+/// `Router`, which runs the accept loop and drains connections on shutdown.
+/// `handle_connection` installs the connection into its `Peer` and returns; the
+/// peer's own loop drives it, and iroh keeps the connection alive because that
+/// stored clone outlives this handler's copy.
+#[derive(Clone)]
+struct PaiShoProtocol {
+    peers: Arc<PeerManager>,
+}
+
+impl std::fmt::Debug for PaiShoProtocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PaiShoProtocol")
+    }
+}
+
+impl ProtocolHandler for PaiShoProtocol {
+    async fn accept(&self, conn: iroh::endpoint::Connection) -> Result<(), AcceptError> {
+        if let Err(e) = self.peers.handle_connection(conn).await {
+            warn!("error handling incoming connection: {}", e);
+        }
+        Ok(())
+    }
+}
+
 /// The TUN backend's reserved resolver address (answers `.pai-sho` on :53 in-stack).
 const TUN_RESOLVER_IP: std::net::Ipv4Addr = std::net::Ipv4Addr::new(10, 99, 0, 53);
 
@@ -357,11 +359,16 @@ pub async fn run(
         daemon.peers.broadcast_grants().await;
     }
 
-    // Start accepting peer connections
-    let accept_daemon = daemon.clone();
-    tokio::spawn(async move {
-        accept_daemon.accept_loop().await;
-    });
+    // Accept peer connections via iroh's Router: it runs the accept loop, routes
+    // the ALPN to the peer manager, and drains in-flight connections on shutdown.
+    let router = Router::builder(daemon.endpoint.clone())
+        .accept(
+            ALPN,
+            PaiShoProtocol {
+                peers: daemon.peers.clone(),
+            },
+        )
+        .spawn();
 
     // Listen for CLI commands on Unix socket
     let listener = UnixListener::bind(socket_path).context("failed to bind Unix socket")?;
@@ -390,6 +397,9 @@ pub async fn run(
         r = socket_loop => r?,
         _ = shutdown_signal() => info!("shutdown signal received, stopping"),
     }
+
+    // Drain in-flight connections before exit.
+    router.shutdown().await.ok();
     Ok(())
 }
 
