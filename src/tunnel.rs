@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result};
 use std::net::{IpAddr, SocketAddr};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{debug, error, info};
 
@@ -26,6 +27,7 @@ where
 
     loop {
         let (stream, client_addr) = listener.accept().await?;
+        stream.set_nodelay(true).ok();
         debug!("accepted connection from {} on port {}", client_addr, port);
 
         // Open connection to peer for this port
@@ -55,6 +57,7 @@ pub async fn handle_tunnel(
     let stream = TcpStream::connect(addr)
         .await
         .with_context(|| format!("failed to connect to {}", addr))?;
+    stream.set_nodelay(true).ok();
 
     forward_bidirectional(stream, send, recv).await
 }
@@ -68,12 +71,12 @@ async fn forward_bidirectional(
     let (mut tcp_read, mut tcp_write) = tcp.into_split();
 
     let tcp_to_quic = async {
-        let result = tokio::io::copy(&mut tcp_read, &mut quic_send).await;
+        let result = copy_flush(&mut tcp_read, &mut quic_send).await;
         let _ = quic_send.finish();
         result
     };
 
-    let quic_to_tcp = async { tokio::io::copy(&mut quic_recv, &mut tcp_write).await };
+    let quic_to_tcp = async { copy_flush(&mut quic_recv, &mut tcp_write).await };
 
     tokio::select! {
         r = tcp_to_quic => { debug!("tcp->quic ended: {:?}", r); }
@@ -81,6 +84,28 @@ async fn forward_bidirectional(
     }
 
     Ok(())
+}
+
+/// Copy from `reader` to `writer`, flushing after every chunk. `tokio::io::copy`
+/// buffers up to ~8KB before flushing, which adds latency to interactive traffic
+/// (a keystroke over a forwarded PTY). Flushing each write keeps small packets
+/// moving. Pattern from n0-computer/pigeons.
+pub async fn copy_flush<R, W>(reader: &mut R, writer: &mut W) -> std::io::Result<u64>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let mut buf = [0u8; 16 * 1024];
+    let mut total = 0u64;
+    loop {
+        let n = reader.read(&mut buf).await?;
+        if n == 0 {
+            return Ok(total);
+        }
+        writer.write_all(&buf[..n]).await?;
+        writer.flush().await?;
+        total += n as u64;
+    }
 }
 
 /// Trait for opening tunnels to a peer
