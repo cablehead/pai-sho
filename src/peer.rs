@@ -967,11 +967,11 @@ async fn bridge(peer: Arc<Peer>, acc: Accept) -> Result<()> {
     let (mut client_r, mut client_w) = tokio::io::split(acc.stream);
 
     let client_to_quic = async {
-        let _ = tokio::io::copy(&mut client_r, &mut qs).await;
+        let _ = tunnel::copy_flush(&mut client_r, &mut qs).await;
         let _ = qs.finish();
     };
     let quic_to_client = async {
-        let _ = tokio::io::copy(&mut qr, &mut client_w).await;
+        let _ = tunnel::copy_flush(&mut qr, &mut client_w).await;
         let _ = client_w.shutdown().await;
     };
     tokio::select! {
