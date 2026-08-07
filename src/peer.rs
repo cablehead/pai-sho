@@ -94,6 +94,9 @@ pub struct PeerManager {
     /// TUN owned-network backend. When present, surfaces bind on the TUN via a
     /// userspace stack instead of loopback (ADR 0005); None = loopback backend.
     netstack: Option<NetStack>,
+    /// This node's own name. The owned resolver answers `<self_name>.pai-sho`
+    /// with 127.0.0.1, so local traffic uses the same origin peers do.
+    self_name: Option<String>,
     /// Serializes binding creation/teardown and surface changes so a port's
     /// listener state and the address it binds move together
     bind_lock: Mutex<()>,
@@ -109,6 +112,7 @@ impl PeerManager {
         pins: Pins,
         surfaces: SurfaceStore,
         netstack: Option<NetStack>,
+        self_name: Option<String>,
     ) -> Self {
         Self {
             peers: DashMap::new(),
@@ -119,6 +123,7 @@ impl PeerManager {
             pins,
             surfaces,
             netstack,
+            self_name,
             bind_lock: Mutex::new(()),
         }
     }
@@ -795,6 +800,11 @@ impl PeerManager {
     /// the name a surface was projected under (an enrollment label, or an
     /// explicit `--as`).
     pub async fn resolve_name(&self, label: &str) -> Option<IpAddr> {
+        // Our own name resolves to loopback (the loopback-backend path; the TUN
+        // backend answers self-name from its in-stack name map).
+        if self.self_name.as_deref() == Some(label) {
+            return Some(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+        }
         let peers: Vec<Arc<Peer>> = self.peers.iter().map(|e| e.value().clone()).collect();
         for peer in peers {
             if let Some(surface) = peer.surface.read().await.as_ref() {

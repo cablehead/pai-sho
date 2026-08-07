@@ -81,6 +81,7 @@ impl Daemon {
         host: IpAddr,
         key_path: &Path,
         netstack: Option<crate::netstack::NetStack>,
+        name: Option<String>,
     ) -> Result<Arc<Self>> {
         let secret_key = load_or_create_key(key_path)?;
 
@@ -112,6 +113,7 @@ impl Daemon {
                 pins,
                 surfaces,
                 netstack,
+                name,
             )),
             endpoint,
             grants,
@@ -173,7 +175,6 @@ impl Daemon {
             bindings: self.peers.list_bindings().await,
         }
     }
-
 
     /// Handle a request from the CLI client
     pub async fn handle_request(self: &Arc<Self>, request: Request) -> Response {
@@ -276,6 +277,38 @@ impl ProtocolHandler for PaiShoProtocol {
 const TUN_RESOLVER_IP: std::net::Ipv4Addr = std::net::Ipv4Addr::new(10, 99, 0, 53);
 
 #[allow(clippy::too_many_arguments)]
+/// Chown the control socket to `user`, so a root daemon can hand it to the
+/// logged-in user. Resolves the username to uid/gid via getpwnam.
+fn set_socket_owner(path: &Path, user: &str) -> Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    let cuser = CString::new(user).context("invalid --socket-owner")?;
+    let pw = unsafe { libc::getpwnam(cuser.as_ptr()) };
+    anyhow::ensure!(!pw.is_null(), "unknown --socket-owner user: {}", user);
+    let (uid, gid) = unsafe { ((*pw).pw_uid, (*pw).pw_gid) };
+    let cpath = CString::new(path.as_os_str().as_bytes()).context("bad socket path")?;
+    let r = unsafe { libc::chown(cpath.as_ptr(), uid, gid) };
+    anyhow::ensure!(
+        r == 0,
+        "chown {:?} to {}: {}",
+        path,
+        user,
+        std::io::Error::last_os_error()
+    );
+    Ok(())
+}
+
+/// Chmod the control socket to an octal `mode` string (e.g. "660").
+fn set_socket_mode(path: &Path, mode: &str) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let m = u32::from_str_radix(mode, 8)
+        .with_context(|| format!("invalid --socket-mode (octal): {}", mode))?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(m))
+        .with_context(|| format!("chmod {:?}", path))?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     host: IpAddr,
     socket_path: &Path,
@@ -285,6 +318,9 @@ pub async fn run(
     enroll: Option<String>,
     resolver: Option<std::net::SocketAddr>,
     tun: Option<String>,
+    socket_owner: Option<String>,
+    socket_mode: Option<String>,
+    name: Option<String>,
 ) -> Result<()> {
     // Clean up old socket
     let _ = std::fs::remove_file(socket_path);
@@ -309,8 +345,15 @@ pub async fn run(
     };
     let ns_handle = netstack.as_ref().map(|(ns, _)| ns.clone());
 
+    // Self-name: <name>.pai-sho -> 127.0.0.1, so local traffic uses the same
+    // origin peers do (CORS). On the TUN backend the in-stack resolver reads the
+    // name map directly; in loopback mode PeerManager::resolve_name handles it.
+    if let (Some(ns), Some(n)) = (ns_handle.as_ref(), name.as_ref()) {
+        ns.add_surface(std::net::Ipv4Addr::LOCALHOST, Some(n.clone()));
+    }
+
     let key_path = key_path.unwrap_or_else(default_key_path);
-    let daemon = Daemon::new(host, &key_path, ns_handle).await?;
+    let daemon = Daemon::new(host, &key_path, ns_handle, name).await?;
 
     println!("Ticket: {}", daemon.ticket());
     info!("daemon started, host={}, key={}", host, key_path.display());
@@ -372,6 +415,18 @@ pub async fn run(
 
     // Listen for CLI commands on Unix socket
     let listener = UnixListener::bind(socket_path).context("failed to bind Unix socket")?;
+
+    // Set socket ownership/mode before the accept loop starts, so a root daemon
+    // (launchd) can hand the socket to the logged-in user with no window where
+    // the socket is accept-ready but still root-owned. No poll, no race.
+    if let Some(owner) = &socket_owner {
+        set_socket_owner(socket_path, owner)?;
+        info!("socket {:?} owned by {}", socket_path, owner);
+    }
+    if let Some(mode) = &socket_mode {
+        set_socket_mode(socket_path, mode)?;
+        info!("socket {:?} mode {}", socket_path, mode);
+    }
 
     info!("listening on {:?}", socket_path);
 
