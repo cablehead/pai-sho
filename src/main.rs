@@ -19,7 +19,13 @@ mod tunnel;
 #[derive(Parser)]
 #[clap(
     name = "pai-sho",
-    about = "What happens when you want dumbpipe to stay running, handle a few ports at once, and reconnect when your laptop wakes up",
+    about = "Reach a machine's ports from your laptop, each under its own name",
+    long_about = "Spin up a box in the middle of nowhere, with no way in. Drop one \
+binary on it. No open ports, no public IP: it dials home and punches through. \
+Reach your boxes from your laptop, each under its own name like \
+vibenv-ndyg.pai-sho.\n\n\
+Access is default deny and per peer. You grant a specific port to a specific \
+peer's key, and that peer alone can reach it.",
     version
 )]
 struct Cli {
@@ -70,11 +76,11 @@ pub enum Command {
         name: Option<String>,
     },
 
-    /// Extend an invitation. With a key, to that key alone. Without one,
-    /// prints a one-time invitation valid for 5 minutes.
+    /// Extend an invitation. Without a key, prints a one-time invitation valid
+    /// 5 minutes. With one, authorizes that key alone and creates no secret.
     Invite {
-        /// Peer's key, when you already know it and nothing secret can travel
-        /// to it. See docs/adr/0003-host-attested-enrollment.md
+        /// Peer's key, for when nothing secret can safely travel to it.
+        /// See docs/adr/0003-host-attested-enrollment.md
         key: Option<String>,
         /// What to call the peer that takes this up
         #[arg(long = "as")]
@@ -84,7 +90,7 @@ pub enum Command {
         expose: Vec<u16>,
     },
 
-    /// Take up an invitation, or reach a peer you know by key
+    /// Take up an invitation, or reach a peer you already know by key
     Accept {
         /// An invitation, or a bare key
         handle: String,
@@ -99,7 +105,7 @@ pub enum Command {
         peer: String,
     },
 
-    /// Expose a port to specific peers (a directed grant)
+    /// Grant a local port to named peers. Nothing is reachable without one.
     #[command(group = ArgGroup::new("grantees").required(true).args(["to", "all"]))]
     Expose {
         port: u16,
@@ -112,7 +118,7 @@ pub enum Command {
         all: bool,
     },
 
-    /// Revoke grants for a port
+    /// Revoke grants for a port. Bare, it revokes every grant for that port.
     Unexpose {
         port: u16,
         /// Revoke only this peer's grant; defaults to every grant for the port
@@ -126,22 +132,23 @@ pub enum Command {
     /// Print this daemon's key
     Key,
 
-    /// Project a peer's surface to a local address so its ports are reachable.
+    /// Override where a peer's ports are bound. Peers are projected
+    /// automatically, so this is only needed to pin an address or rename one.
     /// See docs/adr/0004-peer-surfaces.md.
     Project {
-        /// Peer to project (an endpoint key or an enrollment label)
+        /// Peer to project (a key or the name you gave it)
         peer: String,
         /// Local address to bind at; allocated from 127.0.1.0/24 if omitted
         #[arg(long)]
         ip: Option<IpAddr>,
-        /// DNS handle to add in /etc/hosts (e.g. `broker`)
+        /// Rename this peer's surface (e.g. `broker`)
         #[arg(long = "as")]
         name: Option<String>,
     },
 
     /// Take a peer's surface down: unbind its ports, drop its address and name
     Unproject {
-        /// Peer to unproject (an endpoint key or an enrollment label)
+        /// Peer to unproject (a key or the name you gave it)
         peer: String,
     },
 }
