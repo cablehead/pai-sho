@@ -50,29 +50,28 @@ by you alone.
 
 On my laptop the daemon is already running on its own network interface (the
 [Homebrew install](#install) sets that up; [Setting up the network](#setting-up-the-network)
-covers doing it by hand). I print its ticket and mint a one-time token for the VM
-I'm about to boot:
+covers doing it by hand). I invite the VM I'm about to boot:
 
 ```sh
-pai-sho ticket
-# 5hc4bjqfp6booceusm3jrfebbegyfi6aiqwbgx4xxqmpvg5usoyq
-pai-sho grant-token --label vibenv-ndyg
-# 7fd25613dd5e17cb...   (one-time, valid 5 minutes)
+pai-sho invite --as vibenv-ndyg
+# 5hc4bjqfp6booceusm3jrfebbegyfi6aiqwbgx4xxqmpvg5usoyq.7fd25613dd5e17cb...
+# one-time, valid 5 minutes
 ```
+
+That one value says who to dial and proves the VM may.
 
 The VM runs an [http-nu](https://github.com/cablehead/http-nu) app on `:3001` and
 [stellar](https://github.com/cablehead/stellar) on `:7331` for live CSS editing.
-Its daemon dials home and exposes both ports to my laptop:
+Its daemon takes up the invitation and exposes both ports to my laptop:
 
 ```sh
-pai-sho daemon -a 5hc4bjqfp6booceusm3jrfebbegyfi6aiqwbgx4xxqmpvg5usoyq \
-    -e 3001,7331 --enroll 7fd25613dd5e17cb...
+pai-sho daemon --accept 5hc4bjqfp6...7fd25613dd... -e 3001,7331
 ```
 
-The VM enrolls under the label `vibenv-ndyg`, and only my laptop can reach it. Anyone else
+The VM comes up as `vibenv-ndyg`, and only my laptop can reach it. Anyone else
 who dials the VM is refused.
 
-On enrollment the VM is projected onto my network on its own: it gets an address
+On acceptance the VM is projected onto my network on its own: it gets an address
 like `10.99.1.2`, and its ports bind there under the name `vibenv-ndyg`. Both answer by
 name, with no manual step:
 
@@ -85,14 +84,14 @@ Spin up something new on the VM and expose it live:
 
 ```sh
 http-nu :3002 -c '{|req| "hello from a new experiment"}'
-pai-sho expose 3002 --all
+pai-sho expose 3002 --to <laptop-key>
 ```
 
 `vibenv-ndyg` is already on my network, so `3002` binds under it too, reachable at
 `http://vibenv-ndyg.pai-sho:3002` right away. Done with it? `pai-sho unexpose 3002`.
 
 Close the laptop and reopen it: the connection restores on its own, the surface
-rebinds, and no new token is needed.
+rebinds, and no new invitation is needed.
 
 ## Install
 
@@ -142,7 +141,7 @@ The service creates the utun, points the system at the `.pai-sho` resolver, and
 hands you the control socket, so the CLI needs no sudo:
 
 ```sh
-pai-sho ticket
+pai-sho key
 ```
 
 To run it by hand instead of under the supervisor:
@@ -181,17 +180,19 @@ pai-sho [--socket <path>] <command>
 
 ```
 daemon [options]           Start the daemon
-ticket                     Print the daemon's ticket
-grant-token --label <l>    Mint a one-time enrollment token (valid 5 min)
-pin <key> --label <l>      Enroll a peer by key, no token (host-attested)
-add-peer <ticket>          Connect to a peer
-remove-peer <ticket>       Disconnect from a peer (and drop its pin)
+key                        Print this daemon's key
+invite [<key>] [--as <n>] [--expose <port>...]
+                           Extend an invitation. With a key, to that key alone
+                           (host-attested, no secret). Without one, print a
+                           one-time invitation valid 5 minutes.
+accept <invite|key> [--as <n>]
+                           Take up an invitation, or reach a peer by key
+forget <peer>              Forget a peer: close it, unbind, revoke its grants
 expose <port> (--to <key> | --all)  Grant a local port to named peers
 unexpose <port> [--to <k>] Revoke grants for a port (or one peer's grant)
 project <peer> [--ip <a>] [--as <name>]  Bind a peer's ports at a local address
 unproject <peer>           Take a peer's surface down (unbind its ports)
-surfaces                   Show each peer and its projection (JSON)
-list                       Show peers, grants, and bindings (JSON)
+list                       Peers, grants, and where their ports are bound (JSON)
 ```
 
 ### Daemon Options
@@ -199,9 +200,8 @@ list                       Show peers, grants, and bindings (JSON)
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--host` | `127.0.0.1` | Address to forward exposed ports to |
-| `-a, --add` | | Add peer on startup (repeatable) |
-| `-e, --expose` | | Expose port to the `-a` peers (repeat or comma-separate) |
-| `--enroll` | | One-time token to present to the `-a` peers |
+| `-a, --accept` | | Take up an invitation, or a peer's key, on startup (repeatable) |
+| `-e, --expose` | | Expose port to the `--accept` peers (repeat or comma-separate) |
 | `--key` | `~/.local/state/pai-sho/key` | Secret key path (created if missing) |
 | `--socket` | `/tmp/pai-sho.sock` | Unix socket path |
 | `--tun` | | Put surfaces on a private TUN network (`utun` on macOS, a pre-created device like `ps0` on Linux); the resolver answers in-stack on `10.99.0.53:53` |
@@ -209,9 +209,9 @@ list                       Show peers, grants, and bindings (JSON)
 
 ## How it works
 
-**Identity.** Each daemon has a stable ticket, an iroh endpoint ID backed by a
-keypair at `--key`. Because it does not change, a launcher can bake one operator
-ticket into every workload it boots.
+**Identity.** Each daemon has a stable key, an iroh endpoint ID backed by a
+keypair at `--key`. Because it does not change, a launcher can bake one
+operator key into every workload it boots.
 
 **Grants.** Access is default deny. A port becomes reachable only through a grant that names the peers allowed to
 reach it, and is served to them alone. iroh proves the connecting
@@ -219,11 +219,12 @@ peer's key cryptographically, so a grant names a proven identity, not a shareabl
 address. You cannot hand out reach by leaking a string
 ([ADR 0001](docs/adr/0001-directed-grants.md)).
 
-**Enrollment.** A connection from an unknown key is refused unless it carries a
-one-time token from `grant-token`. A valid token pins the peer's key under the
-token's label and is then spent. Pins survive restarts, so a reboot does not
-orphan enrolled workloads ([ADR 0002](docs/adr/0002-token-enrollment.md)). When you
-already know a peer's key, `pin` does the same without a token
+**Invitations.** A connection from an unknown key is refused unless it carries a
+code from `invite`. The code is spent on use, and the peer it admitted survives
+restarts, so a reboot does not orphan a workload
+([ADR 0002](docs/adr/0002-token-enrollment.md)). An invitation is `<key>.<code>`:
+who to dial, and the proof you may. When you already know a peer's key,
+`invite <key>` authorizes it with no secret created at all
 ([ADR 0003](docs/adr/0003-host-attested-enrollment.md)).
 
 **Forwarding.** Each peer hears only the ports granted to it, and traffic runs
@@ -258,8 +259,8 @@ backoff. Projected surfaces stay put and rebind when the link returns.
 
 [ngrok](https://ngrok.com) and [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
 are great when you need a public URL anyone can reach. pai-sho is for connecting
-your own machines, or sharing a ticket with a friend so they can see something
-you're working on.
+your own machines, or sending an invitation to a friend so they can see
+something you're working on.
 
 [SSH tunnels](https://www.ssh.com/academy/ssh/tunneling) need inbound access on at
 least one side. pai-sho works when neither machine has open inbound ports.
