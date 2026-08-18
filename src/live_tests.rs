@@ -394,3 +394,37 @@ async fn an_invitation_can_bring_its_own_grant() {
     sock.read_exact(&mut buf).await.unwrap();
     assert_eq!(&buf, b"carried");
 }
+
+#[tokio::test]
+async fn an_unnamed_peer_still_gets_a_name() {
+    let port = echo_server().await;
+    let (a, b) = pair(IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
+
+    // Neither side passes --as.
+    let invite = match a
+        .request(Request::Invite {
+            key: None,
+            name: None,
+            expose: vec![port],
+        })
+        .await
+    {
+        Response::Invite(i) => i,
+        other => panic!("expected an invitation, got {:?}", other),
+    };
+    b.request(Request::Accept {
+        handle: invite,
+        name: None,
+    })
+    .await;
+
+    bound_addr(&b, port).await;
+
+    let peers = b.daemon.peers().list().await;
+    let seen = peers.iter().find(|p| p.key == a.key()).unwrap();
+    assert!(seen.name.is_none(), "nothing named it");
+
+    // The surface is still reachable by name: a short form of the key.
+    let short: String = a.key().chars().take(8).collect();
+    assert!(b.daemon.peers().resolve_name(&short).await.is_some());
+}

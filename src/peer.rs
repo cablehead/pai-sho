@@ -446,7 +446,13 @@ impl PeerManager {
                 return None;
             }
         };
-        let name = peer.label.clone();
+        // Every surface answers by name. Nothing named this peer, so it gets
+        // a short form of its key until `project --as` renames it.
+        let name = Some(
+            peer.label
+                .clone()
+                .unwrap_or_else(|| crate::core::session::default_name(&peer.endpoint_id)),
+        );
         if let Err(e) = self.claim_addr(ip, name.clone()) {
             error!("cannot claim {} for {}: {}", ip, peer.endpoint_id, e);
             return None;

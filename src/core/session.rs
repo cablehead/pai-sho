@@ -49,6 +49,16 @@ pub enum Refusal {
     NotGranted,
 }
 
+/// How much of a key to use when nothing named the peer. Long enough to read
+/// out loud and to stay unique in any realistic peer list.
+const SHORT_KEY: usize = 8;
+
+/// What to call a peer when neither side passed `--as`. A truncated key is
+/// ugly but stable, and `project --as` renames it.
+pub fn default_name(key: &EndpointId) -> String {
+    key.to_string().chars().take(SHORT_KEY).collect()
+}
+
 impl Admission {
     /// Name used in `list` output.
     pub fn as_str(self) -> &'static str {
@@ -667,5 +677,18 @@ mod tests {
                 reason: Refusal::NotGranted
             }
         );
+    }
+
+    #[test]
+    fn an_unnamed_peer_falls_back_to_a_short_key() {
+        let k = key(1);
+        let name = default_name(&k);
+        assert_eq!(name.len(), SHORT_KEY);
+        assert!(k.to_string().starts_with(&name));
+    }
+
+    #[test]
+    fn short_names_differ_between_peers() {
+        assert_ne!(default_name(&key(1)), default_name(&key(2)));
     }
 }
