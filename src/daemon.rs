@@ -238,7 +238,6 @@ impl Daemon {
                     to: to.to_string(),
                 })
                 .collect(),
-            bindings: self.peers.list_bindings().await,
         }
     }
 
@@ -305,7 +304,6 @@ impl Daemon {
                 Ok(()) => Response::Ok,
                 Err(e) => Response::Error(e.to_string()),
             },
-            Request::Surfaces => Response::Surfaces(self.peers.surfaces().await),
         }
     }
 }

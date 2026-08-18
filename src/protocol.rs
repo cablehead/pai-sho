@@ -52,8 +52,6 @@ pub enum Request {
     Unproject {
         peer: String,
     },
-    /// List surfaces (every known peer and its projection, if any)
-    Surfaces,
 }
 
 /// Response from daemon to CLI client
@@ -63,36 +61,18 @@ pub enum Response {
     Key(String),
     List(ListInfo),
     Invite(String),
-    Surfaces(Vec<SurfaceInfo>),
     Error(String),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SurfaceInfo {
-    /// Peer key this surface belongs to
-    pub peer: String,
-    /// Label assigned at enrollment, if any
-    pub label: Option<String>,
-    /// Whether the peer is currently projected (has a local address)
-    pub projected: bool,
-    /// Local address the surface is bound at (absent when not projected)
-    pub ip: Option<String>,
-    /// DNS handle in /etc/hosts (absent when unnamed or not projected)
-    pub name: Option<String>,
-    /// Ports currently bound under this surface
-    pub ports: Vec<u16>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 pub struct ListInfo {
-    /// This node's own key (its ticket)
+    /// This node's own key
     pub me: String,
     pub peers: Vec<PeerInfo>,
     /// Ports this node exposes (distinct granted ports)
     pub i_expose: Vec<u16>,
     /// Who each port is granted to, one row per (port, grantee)
     pub grants: Vec<GrantInfo>,
-    pub bindings: Vec<BindingInfo>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -105,20 +85,17 @@ pub struct GrantInfo {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PeerInfo {
     pub key: String,
-    /// Label assigned at enrollment (absent for peers added by ticket)
-    pub label: Option<String>,
+    /// What we call this peer locally, absent until something names it
+    pub name: Option<String>,
     pub online: bool,
     /// How this peer came to be admitted: "added", "code", or "key"
     pub admission: String,
     /// Ports this peer exposes to us
     pub they_expose: Vec<u16>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BindingInfo {
-    pub port: u16,
-    /// Key of the peer this local port tunnels to
-    pub peer: String,
+    /// Local address its ports are bound at, absent when not projected
+    pub ip: Option<String>,
+    /// Ports bound under that address
+    pub bound: Vec<u16>,
 }
 
 // ============================================================================

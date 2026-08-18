@@ -186,9 +186,9 @@ where
 /// Where `b` has bound `a`'s `port`, once it has.
 async fn bound_addr(b: &TestDaemon, port: u16) -> SocketAddr {
     until(20, || async {
-        let surfaces = b.daemon.peers().surfaces().await;
-        let s = surfaces.iter().find(|s| s.ports.contains(&port))?;
-        let ip: IpAddr = s.ip.as_ref()?.parse().ok()?;
+        let peers = b.daemon.peers().list().await;
+        let p = peers.iter().find(|p| p.bound.contains(&port))?;
+        let ip: IpAddr = p.ip.as_ref()?.parse().ok()?;
         Some(SocketAddr::from((ip, port)))
     })
     .await
@@ -237,11 +237,8 @@ async fn an_ungranted_port_is_never_announced() {
 
     // The revocation reaches b and its binding goes away.
     until(20, || async {
-        let surfaces = b.daemon.peers().surfaces().await;
-        surfaces
-            .iter()
-            .all(|s| !s.ports.contains(&port))
-            .then_some(())
+        let peers = b.daemon.peers().list().await;
+        peers.iter().all(|p| !p.bound.contains(&port)).then_some(())
     })
     .await;
 }

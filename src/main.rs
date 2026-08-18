@@ -117,7 +117,7 @@ pub enum Command {
         to: Option<String>,
     },
 
-    /// List peers, exposed ports, and bindings
+    /// List peers, their grants, and where their ports are bound
     List,
 
     /// Print this daemon's key
@@ -141,9 +141,6 @@ pub enum Command {
         /// Peer to unproject (an endpoint key or an enrollment label)
         peer: String,
     },
-
-    /// List surfaces: every known peer and its projection, if any
-    Surfaces,
 }
 
 #[tokio::main]

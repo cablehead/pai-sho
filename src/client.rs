@@ -22,7 +22,6 @@ pub async fn send_command(socket_path: &Path, command: Command) -> Result<()> {
             name,
         },
         Command::Unproject { peer } => Request::Unproject { peer },
-        Command::Surfaces => Request::Surfaces,
         Command::Daemon { .. } => unreachable!("daemon handled separately"),
     };
 
@@ -50,9 +49,6 @@ pub async fn send_command(socket_path: &Path, command: Command) -> Result<()> {
         Response::Invite(invite) => println!("{}", invite),
         Response::List(info) => {
             println!("{}", serde_json::to_string_pretty(&info)?);
-        }
-        Response::Surfaces(surfaces) => {
-            println!("{}", serde_json::to_string_pretty(&surfaces)?);
         }
         Response::Error(e) => {
             eprintln!("Error: {}", e);

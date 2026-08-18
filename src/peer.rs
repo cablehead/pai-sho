@@ -8,7 +8,7 @@
 use crate::core::session::{Action, Admission, ConnId, Refusal, Session};
 use crate::enroll::Pins;
 use crate::netstack::{Accept, NetStack};
-use crate::protocol::{BindingInfo, PeerInfo, PeerMessage, SurfaceInfo, ALPN};
+use crate::protocol::{PeerInfo, PeerMessage, ALPN};
 use crate::surface::{self, Surface, SurfaceStore};
 use crate::tunnel::{self, PeerConnection};
 use anyhow::{anyhow, Context, Result};
@@ -804,15 +804,18 @@ impl PeerManager {
 
     /// List all peers
     pub async fn list(&self) -> Vec<PeerInfo> {
+        let peers: Vec<Arc<Peer>> = self.peers.iter().map(|e| e.value().clone()).collect();
         let mut result = Vec::new();
-        for entry in self.peers.iter() {
-            let peer = entry.value();
-            let connected = {
+        for peer in peers {
+            let online = {
                 let conn = peer.connection.read().await;
                 conn.as_ref()
                     .map(|c| c.close_reason().is_none())
                     .unwrap_or(false)
             };
+            let surface = peer.surface.read().await.clone();
+            let mut bound: Vec<u16> = peer.bindings.iter().map(|e| *e.key()).collect();
+            bound.sort_unstable();
             let admission = self
                 .session
                 .lock()
@@ -822,26 +825,13 @@ impl PeerManager {
                 .unwrap_or("unknown");
             result.push(PeerInfo {
                 key: peer.endpoint_id.to_string(),
-                label: peer.label.clone(),
-                online: connected,
+                name: peer.label.clone(),
+                online,
                 admission: admission.to_string(),
                 they_expose: peer.exposed_ports.read().await.clone(),
+                ip: surface.as_ref().map(|s| s.ip.to_string()),
+                bound,
             });
-        }
-        result
-    }
-
-    /// List all bindings
-    pub async fn list_bindings(&self) -> Vec<BindingInfo> {
-        let mut result = Vec::new();
-        for entry in self.peers.iter() {
-            let peer = entry.value();
-            for binding in peer.bindings.iter() {
-                result.push(BindingInfo {
-                    port: *binding.key(),
-                    peer: peer.endpoint_id.to_string(),
-                });
-            }
         }
         result
     }
@@ -1005,25 +995,6 @@ impl PeerManager {
     }
 
     /// List every known peer and its surface (projected or not).
-    pub async fn surfaces(&self) -> Vec<SurfaceInfo> {
-        let peers: Vec<Arc<Peer>> = self.peers.iter().map(|e| e.value().clone()).collect();
-        let mut result = Vec::new();
-        for peer in peers {
-            let surface = peer.surface.read().await.clone();
-            let mut ports: Vec<u16> = peer.bindings.iter().map(|e| *e.key()).collect();
-            ports.sort_unstable();
-            result.push(SurfaceInfo {
-                peer: peer.endpoint_id.to_string(),
-                label: peer.label.clone(),
-                projected: surface.is_some(),
-                ip: surface.as_ref().map(|s| s.ip.to_string()),
-                name: surface.as_ref().and_then(|s| s.name.clone()),
-                ports,
-            });
-        }
-        result
-    }
-
     /// Re-apply persisted surfaces at startup: restore each address so a
     /// projected peer keeps its IP and name across a restart. Ports rebind
     /// when the peer reconnects and re-announces.
