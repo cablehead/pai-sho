@@ -17,6 +17,8 @@ pub enum Request {
     Invite {
         key: Option<String>,
         name: Option<String>,
+        /// Ports granted to whoever takes the invitation up
+        expose: Vec<u16>,
     },
     /// Take up an invitation, or reach a peer known by key
     Accept {

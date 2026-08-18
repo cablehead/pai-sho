@@ -9,7 +9,7 @@ use tokio::net::UnixStream;
 
 pub async fn send_command(socket_path: &Path, command: Command) -> Result<()> {
     let request = match command {
-        Command::Invite { key, name } => Request::Invite { key, name },
+        Command::Invite { key, name, expose } => Request::Invite { key, name, expose },
         Command::Accept { handle, name } => Request::Accept { handle, name },
         Command::Forget { peer } => Request::Forget { peer },
         Command::Expose { port, to, all } => Request::Expose { port, to, all },

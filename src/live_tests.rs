@@ -120,6 +120,7 @@ async fn enroll(a: &TestDaemon, b: &TestDaemon, name: &str) {
         .request(Request::Invite {
             key: None,
             name: Some(name.to_string()),
+            expose: vec![],
         })
         .await
     {
@@ -359,4 +360,37 @@ async fn a_port_blocked_at_first_still_binds() {
     let mut buf = [0u8; 4];
     sock.read_exact(&mut buf).await.unwrap();
     assert_eq!(&buf, b"late");
+}
+
+#[tokio::test]
+async fn an_invitation_can_bring_its_own_grant() {
+    let port = echo_server().await;
+    let (a, b) = pair(IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
+
+    // One command on a: the invitation carries the grant.
+    let invite = match a
+        .request(Request::Invite {
+            key: None,
+            name: Some("b".into()),
+            expose: vec![port],
+        })
+        .await
+    {
+        Response::Invite(i) => i,
+        other => panic!("expected an invitation, got {:?}", other),
+    };
+
+    // One command on b, and the port is reachable. No expose step.
+    b.request(Request::Accept {
+        handle: invite,
+        name: Some("a".into()),
+    })
+    .await;
+
+    let addr = bound_addr(&b, port).await;
+    let mut sock = TcpStream::connect(addr).await.unwrap();
+    sock.write_all(b"carried").await.unwrap();
+    let mut buf = [0u8; 7];
+    sock.read_exact(&mut buf).await.unwrap();
+    assert_eq!(&buf, b"carried");
 }

@@ -17,6 +17,7 @@ pub const TOKEN_TTL: Duration = Duration::from_secs(5 * 60);
 
 struct PendingToken {
     name: Option<String>,
+    ports: Vec<u16>,
     expires: Instant,
 }
 
@@ -25,6 +26,9 @@ struct PendingToken {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Claimed {
     pub name: Option<String>,
+    /// Ports the issuer granted along with the invitation. The grantee is
+    /// filled in on claim, so the grant still names one key.
+    pub ports: Vec<u16>,
 }
 
 /// One-time enrollment tokens, in-memory (a daemon restart voids them)
@@ -34,17 +38,18 @@ pub struct Tokens {
 }
 
 impl Tokens {
-    pub fn mint(&self, name: Option<String>) -> String {
-        self.mint_with_ttl(name, TOKEN_TTL)
+    pub fn mint(&self, name: Option<String>, ports: Vec<u16>) -> String {
+        self.mint_with_ttl(name, ports, TOKEN_TTL)
     }
 
-    fn mint_with_ttl(&self, name: Option<String>, ttl: Duration) -> String {
+    fn mint_with_ttl(&self, name: Option<String>, ports: Vec<u16>, ttl: Duration) -> String {
         let bytes: [u8; 32] = rand::rng().random();
         let token: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
         self.pending.lock().unwrap().insert(
             token.clone(),
             PendingToken {
                 name,
+                ports,
                 expires: Instant::now() + ttl,
             },
         );
@@ -58,7 +63,10 @@ impl Tokens {
         let mut pending = self.pending.lock().unwrap();
         let now = Instant::now();
         pending.retain(|_, t| t.expires > now);
-        pending.remove(token).map(|t| Claimed { name: t.name })
+        pending.remove(token).map(|t| Claimed {
+            name: t.name,
+            ports: t.ports,
+        })
     }
 }
 
@@ -125,11 +133,12 @@ mod tests {
     #[test]
     fn token_is_single_use() {
         let tokens = Tokens::default();
-        let token = tokens.mint(Some("rustdev".to_string()));
+        let token = tokens.mint(Some("rustdev".to_string()), vec![]);
         assert_eq!(
             tokens.claim(&token),
             Some(Claimed {
-                name: Some("rustdev".to_string())
+                name: Some("rustdev".to_string()),
+                ports: vec![],
             })
         );
         assert_eq!(tokens.claim(&token), None);
@@ -144,7 +153,7 @@ mod tests {
     #[test]
     fn expired_token_fails() {
         let tokens = Tokens::default();
-        let token = tokens.mint_with_ttl(Some("rustdev".to_string()), Duration::ZERO);
+        let token = tokens.mint_with_ttl(Some("rustdev".to_string()), vec![], Duration::ZERO);
         assert_eq!(tokens.claim(&token), None);
     }
 
@@ -169,5 +178,18 @@ mod tests {
         assert_eq!(pins.load().unwrap().len(), 1);
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_token_carries_its_ports() {
+        let tokens = Tokens::default();
+        let token = tokens.mint(None, vec![8080]);
+        assert_eq!(
+            tokens.claim(&token),
+            Some(Claimed {
+                name: None,
+                ports: vec![8080],
+            })
+        );
     }
 }

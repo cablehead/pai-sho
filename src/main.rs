@@ -79,6 +79,9 @@ pub enum Command {
         /// What to call the peer that takes this up
         #[arg(long = "as")]
         name: Option<String>,
+        /// Port(s) to grant along with the invitation (repeat or comma-separate)
+        #[arg(long = "expose", value_delimiter = ',')]
+        expose: Vec<u16>,
     },
 
     /// Take up an invitation, or reach a peer you know by key

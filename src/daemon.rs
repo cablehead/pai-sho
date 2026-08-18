@@ -176,14 +176,32 @@ impl Daemon {
     /// Extend an invitation. Addressed to a key, it authorizes that key when
     /// it dials in and nothing secret is created. Unaddressed, it mints a
     /// one-time code and returns the invitation to hand over.
-    fn invite(&self, key: Option<String>, name: Option<String>) -> Response {
+    async fn invite(
+        &self,
+        key: Option<String>,
+        name: Option<String>,
+        expose: Vec<u16>,
+    ) -> Response {
         match key {
-            Some(key) => match self.peers.pin_peer(&key, name.as_deref()) {
-                Ok(()) => Response::Ok,
-                Err(e) => Response::Error(e.to_string()),
-            },
+            // Addressed to a key we already have: pin it, and grant straight
+            // away rather than deferring to a claim that will never happen.
+            Some(key) => {
+                if let Err(e) = self.peers.pin_peer(&key, name.as_deref()) {
+                    return Response::Error(e.to_string());
+                }
+                let grantee: EndpointId = match key.parse() {
+                    Ok(k) => k,
+                    Err(e) => return Response::Error(format!("invalid key: {}", e)),
+                };
+                for port in expose {
+                    if let Err(e) = self.expose(port, &[grantee]).await {
+                        return Response::Error(e.to_string());
+                    }
+                }
+                Response::Ok
+            }
             None => {
-                let code = self.session.lock().unwrap().mint_token(name);
+                let code = self.session.lock().unwrap().mint_token(name, expose);
                 Response::Invite(
                     Invite {
                         key: self.endpoint.id(),
@@ -244,7 +262,7 @@ impl Daemon {
     /// Handle a request from the CLI client
     pub async fn handle_request(self: &Arc<Self>, request: Request) -> Response {
         match request {
-            Request::Invite { key, name } => self.invite(key, name),
+            Request::Invite { key, name, expose } => self.invite(key, name, expose).await,
             Request::Accept { handle, name } => match self.accept(&handle, name).await {
                 Ok(()) => Response::Ok,
                 Err(e) => Response::Error(e.to_string()),
