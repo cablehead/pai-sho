@@ -49,6 +49,16 @@ pub enum Refusal {
     NotGranted,
 }
 
+/// How much of a key to use when nothing named the peer. Long enough to read
+/// out loud and to stay unique in any realistic peer list.
+const SHORT_KEY: usize = 8;
+
+/// What to call a peer when neither side passed `--as`. A truncated key is
+/// ugly but stable, and `project --as` renames it.
+pub fn default_name(key: &EndpointId) -> String {
+    key.to_string().chars().take(SHORT_KEY).collect()
+}
+
 impl Admission {
     /// Name used in `list` output.
     pub fn as_str(self) -> &'static str {
@@ -94,7 +104,10 @@ pub enum Action {
     /// Refuse a tunnel.
     RejectTunnel { reason: Refusal },
     /// Write this pin to disk.
-    PersistPin { key: EndpointId, label: String },
+    PersistPin {
+        key: EndpointId,
+        label: Option<String>,
+    },
     /// Drop this pin from disk.
     DropPin { key: EndpointId },
 }
@@ -173,7 +186,7 @@ impl Session {
     ) -> Vec<Action> {
         match msg {
             PeerMessage::Enroll { token } => match self.tokens.claim(&token) {
-                Some(label) => {
+                Some(claimed) => {
                     let early = self
                         .pending
                         .remove(&conn)
@@ -182,17 +195,23 @@ impl Session {
                     self.peers.insert(
                         remote,
                         Admitted {
-                            label: Some(label.clone()),
+                            label: claimed.name.clone(),
                             admission: Admission::Code,
                         },
                     );
+                    for port in &claimed.ports {
+                        self.grants.add(*port, remote);
+                    }
                     let mut actions = vec![
                         Action::Admit {
                             conn,
                             peer: remote,
                             replacing: false,
                         },
-                        Action::PersistPin { key: remote, label },
+                        Action::PersistPin {
+                            key: remote,
+                            label: claimed.name,
+                        },
                     ];
                     if !early.is_empty() {
                         actions.push(Action::ApplyPorts {
@@ -298,8 +317,10 @@ impl Session {
         self.peers.get(peer).and_then(|p| p.label.clone())
     }
 
-    pub fn mint_token(&self, label: String) -> String {
-        self.tokens.mint(label)
+    /// Mint a one-time code. `ports` are granted to whoever claims it, so a
+    /// grant still names exactly one key: the key is filled in on claim.
+    pub fn mint_token(&self, name: Option<String>, ports: Vec<u16>) -> String {
+        self.tokens.mint(name, ports)
     }
 
     pub fn granted_ports(&self) -> Vec<u16> {
@@ -473,7 +494,7 @@ mod tests {
     fn a_valid_code_admits_and_pins() {
         let mut s = Session::new();
         let (conn, k) = (ConnId(1), key(9));
-        let token = s.mint_token("rustdev".into());
+        let token = s.mint_token(Some("rustdev".into()), vec![]);
         s.on_inbound(conn, k);
 
         let actions = s.on_unadmitted(conn, k, PeerMessage::Enroll { token });
@@ -487,7 +508,7 @@ mod tests {
                 },
                 Action::PersistPin {
                     key: k,
-                    label: "rustdev".into()
+                    label: Some("rustdev".into())
                 },
                 Action::Announce {
                     peer: k,
@@ -502,7 +523,7 @@ mod tests {
     #[test]
     fn a_code_is_single_use() {
         let mut s = Session::new();
-        let token = s.mint_token("rustdev".into());
+        let token = s.mint_token(Some("rustdev".into()), vec![]);
         let first = key(1);
         s.on_inbound(ConnId(1), first);
         s.on_unadmitted(
@@ -542,7 +563,7 @@ mod tests {
     fn ports_announced_before_the_claim_are_applied_after_it() {
         let mut s = Session::new();
         let (conn, k) = (ConnId(1), key(9));
-        let token = s.mint_token("rustdev".into());
+        let token = s.mint_token(Some("rustdev".into()), vec![]);
         s.on_inbound(conn, k);
         s.on_unadmitted(conn, k, PeerMessage::ExposedPorts(vec![4000, 4001]));
 
@@ -624,5 +645,50 @@ mod tests {
         let mut s = session_with(a);
         s.evict(&a);
         assert_eq!(s.on_inbound(ConnId(1), a), vec![]);
+    }
+
+    #[test]
+    fn an_invitation_can_carry_a_grant() {
+        let mut s = Session::new();
+        let (conn, k) = (ConnId(1), key(9));
+        let token = s.mint_token(None, vec![8080]);
+        s.on_inbound(conn, k);
+
+        let actions = s.on_unadmitted(conn, k, PeerMessage::Enroll { token });
+        assert!(actions.contains(&Action::Announce {
+            peer: k,
+            ports: vec![8080]
+        }));
+        assert_eq!(s.on_tunnel(&k, 8080), Action::ServeTunnel { port: 8080 });
+    }
+
+    #[test]
+    fn a_carried_grant_names_only_the_claimer() {
+        let (a, b) = (key(1), key(2));
+        let mut s = session_with(a);
+        let token = s.mint_token(None, vec![8080]);
+        s.on_inbound(ConnId(1), b);
+        s.on_unadmitted(ConnId(1), b, PeerMessage::Enroll { token });
+
+        assert_eq!(s.on_tunnel(&b, 8080), Action::ServeTunnel { port: 8080 });
+        assert_eq!(
+            s.on_tunnel(&a, 8080),
+            Action::RejectTunnel {
+                reason: Refusal::NotGranted
+            }
+        );
+    }
+
+    #[test]
+    fn an_unnamed_peer_falls_back_to_a_short_key() {
+        let k = key(1);
+        let name = default_name(&k);
+        assert_eq!(name.len(), SHORT_KEY);
+        assert!(k.to_string().starts_with(&name));
+    }
+
+    #[test]
+    fn short_names_differ_between_peers() {
+        assert_ne!(default_name(&key(1)), default_name(&key(2)));
     }
 }

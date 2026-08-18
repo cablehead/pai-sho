@@ -8,7 +8,7 @@
 use crate::core::session::{Action, Admission, ConnId, Refusal, Session};
 use crate::enroll::Pins;
 use crate::netstack::{Accept, NetStack};
-use crate::protocol::{BindingInfo, PeerInfo, PeerMessage, SurfaceInfo, ALPN};
+use crate::protocol::{PeerInfo, PeerMessage, ALPN};
 use crate::surface::{self, Surface, SurfaceStore};
 use crate::tunnel::{self, PeerConnection};
 use anyhow::{anyhow, Context, Result};
@@ -131,16 +131,15 @@ impl PeerManager {
         }
     }
 
-    /// Add a new peer and connect to it. If `enroll_token` is set, present
-    /// it on connect and on every reconnect (the peer ignores it once we
-    /// are pinned).
+    /// Take up an invitation, or reach a peer known by key. We dial this peer
+    /// and keep dialing it. A code, when there is one, is presented on connect
+    /// and on every reconnect (the peer ignores it once we are known).
     pub async fn add_peer(
         self: &Arc<Self>,
-        ticket: &str,
-        enroll_token: Option<String>,
+        endpoint_id: EndpointId,
+        name: Option<String>,
+        code: Option<String>,
     ) -> Result<()> {
-        let endpoint_id: EndpointId = ticket.parse().context("invalid ticket")?;
-
         if self.peers.contains_key(&endpoint_id) {
             return Err(anyhow!("peer already exists"));
         }
@@ -148,11 +147,11 @@ impl PeerManager {
         self.session
             .lock()
             .unwrap()
-            .admit_known(endpoint_id, None, Admission::Added);
+            .admit_known(endpoint_id, name.clone(), Admission::Added);
 
         // Record the peer before dialing. A peer whose daemon is not up yet is
         // still ours: its connection loop retries with backoff.
-        let peer = Peer::new(endpoint_id, None, true, enroll_token, None);
+        let peer = Peer::new(endpoint_id, name, true, code, None);
         self.peers.insert(endpoint_id, peer.clone());
         self.spawn_connection_loop(peer);
 
@@ -161,29 +160,29 @@ impl PeerManager {
 
     /// Register a peer pinned at a previous enrollment (loaded at startup).
     /// We never dial it -- it phones home.
-    pub fn add_pinned(self: &Arc<Self>, key: &str, label: &str) -> Result<()> {
-        let endpoint_id: EndpointId = key.parse().context("invalid pinned key")?;
+    pub fn add_pinned(self: &Arc<Self>, key: &str, name: Option<&str>) -> Result<()> {
+        let endpoint_id: EndpointId = key.parse().context("invalid key")?;
         if self.peers.contains_key(&endpoint_id) {
             return Ok(());
         }
-        self.session.lock().unwrap().admit_known(
-            endpoint_id,
-            Some(label.to_string()),
-            Admission::Key,
-        );
-        let peer = Peer::new(endpoint_id, Some(label.to_string()), false, None, None);
+        let name = name.map(|n| n.to_string());
+        self.session
+            .lock()
+            .unwrap()
+            .admit_known(endpoint_id, name.clone(), Admission::Key);
+        let peer = Peer::new(endpoint_id, name, false, None, None);
         self.peers.insert(endpoint_id, peer.clone());
         self.spawn_connection_loop(peer);
-        info!("pinned peer {} (\"{}\")", endpoint_id, label);
+        info!("invited peer {}", endpoint_id);
         Ok(())
     }
 
     /// Pin a peer by key under a label without a token (host-attested
     /// enrollment): register it live so it is authorized when it phones
     /// home, and persist the pin across restarts. Idempotent.
-    pub fn pin_peer(self: &Arc<Self>, key: &str, label: &str) -> Result<()> {
-        self.add_pinned(key, label)?;
-        self.pins.add(key, label)
+    pub fn pin_peer(self: &Arc<Self>, key: &str, name: Option<&str>) -> Result<()> {
+        self.add_pinned(key, name)?;
+        self.pins.add(key, name)
     }
 
     /// Send a control message on a new uni stream
@@ -447,7 +446,13 @@ impl PeerManager {
                 return None;
             }
         };
-        let name = peer.label.clone();
+        // Every surface answers by name. Nothing named this peer, so it gets
+        // a short form of its key until `project --as` renames it.
+        let name = Some(
+            peer.label
+                .clone()
+                .unwrap_or_else(|| crate::core::session::default_name(&peer.endpoint_id)),
+        );
         if let Err(e) = self.claim_addr(ip, name.clone()) {
             error!("cannot claim {} for {}: {}", ip, peer.endpoint_id, e);
             return None;
@@ -633,9 +638,11 @@ impl PeerManager {
         info!("evicted peer {} ({})", endpoint_id, reason);
     }
 
-    /// Remove a peer by ticket
-    pub async fn remove_peer(&self, ticket: &str) -> Result<()> {
-        let endpoint_id: EndpointId = ticket.parse().context("invalid ticket")?;
+    /// Forget a peer, named by key or by the name we gave it.
+    pub async fn remove_peer(&self, peer_ref: &str) -> Result<()> {
+        let endpoint_id = self
+            .resolve_peer(peer_ref)
+            .ok_or_else(|| anyhow!("no such peer: {}", peer_ref))?;
 
         if !self.peers.contains_key(&endpoint_id) {
             return Err(anyhow!("peer not found"));
@@ -691,7 +698,7 @@ impl PeerManager {
                     self.update_peer_ports(peer, ports).await;
                 }
                 Action::PersistPin { key, label } => {
-                    if let Err(e) = self.pins.add(&key.to_string(), &label) {
+                    if let Err(e) = self.pins.add(&key.to_string(), label.as_deref()) {
                         error!("failed to persist pin for {}: {}", key, e);
                     }
                 }
@@ -803,15 +810,18 @@ impl PeerManager {
 
     /// List all peers
     pub async fn list(&self) -> Vec<PeerInfo> {
+        let peers: Vec<Arc<Peer>> = self.peers.iter().map(|e| e.value().clone()).collect();
         let mut result = Vec::new();
-        for entry in self.peers.iter() {
-            let peer = entry.value();
-            let connected = {
+        for peer in peers {
+            let online = {
                 let conn = peer.connection.read().await;
                 conn.as_ref()
                     .map(|c| c.close_reason().is_none())
                     .unwrap_or(false)
             };
+            let surface = peer.surface.read().await.clone();
+            let mut bound: Vec<u16> = peer.bindings.iter().map(|e| *e.key()).collect();
+            bound.sort_unstable();
             let admission = self
                 .session
                 .lock()
@@ -821,26 +831,13 @@ impl PeerManager {
                 .unwrap_or("unknown");
             result.push(PeerInfo {
                 key: peer.endpoint_id.to_string(),
-                label: peer.label.clone(),
-                online: connected,
+                name: peer.label.clone(),
+                online,
                 admission: admission.to_string(),
                 they_expose: peer.exposed_ports.read().await.clone(),
+                ip: surface.as_ref().map(|s| s.ip.to_string()),
+                bound,
             });
-        }
-        result
-    }
-
-    /// List all bindings
-    pub async fn list_bindings(&self) -> Vec<BindingInfo> {
-        let mut result = Vec::new();
-        for entry in self.peers.iter() {
-            let peer = entry.value();
-            for binding in peer.bindings.iter() {
-                result.push(BindingInfo {
-                    port: *binding.key(),
-                    peer: peer.endpoint_id.to_string(),
-                });
-            }
         }
         result
     }
@@ -1004,25 +1001,6 @@ impl PeerManager {
     }
 
     /// List every known peer and its surface (projected or not).
-    pub async fn surfaces(&self) -> Vec<SurfaceInfo> {
-        let peers: Vec<Arc<Peer>> = self.peers.iter().map(|e| e.value().clone()).collect();
-        let mut result = Vec::new();
-        for peer in peers {
-            let surface = peer.surface.read().await.clone();
-            let mut ports: Vec<u16> = peer.bindings.iter().map(|e| *e.key()).collect();
-            ports.sort_unstable();
-            result.push(SurfaceInfo {
-                peer: peer.endpoint_id.to_string(),
-                label: peer.label.clone(),
-                projected: surface.is_some(),
-                ip: surface.as_ref().map(|s| s.ip.to_string()),
-                name: surface.as_ref().and_then(|s| s.name.clone()),
-                ports,
-            });
-        }
-        result
-    }
-
     /// Re-apply persisted surfaces at startup: restore each address so a
     /// projected peer keeps its IP and name across a restart. Ports rebind
     /// when the peer reconnects and re-announces.

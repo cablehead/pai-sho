@@ -4,10 +4,7 @@ Worked end-to-end flows, written from the operator's side. Each one states what
 has to be true, what travels between machines, and where the flow is rougher
 than it needs to be.
 
-The commands below are the **proposed** surface, not what ships today. Where a
-scenario needs to show the difference, the current commands are marked as such.
-
-## Proposed CLI
+## The CLI
 
 ```
 pai-sho [--socket <path>] <command>
@@ -22,7 +19,7 @@ key                                       Print this daemon's key
 invite [<key>] [--as <name>] [--expose <port>...]
                                           Extend an invitation. With a key, to
                                           that key alone. Without one, prints a
-                                          one-time code (valid 5 minutes).
+                                          one-time invitation (valid 5 minutes).
 accept <invite|key> [--as <name>]         Take up an invitation.
 forget <peer>                             Evict: close, unbind, revoke grants,
                                           drop the record.
@@ -33,8 +30,8 @@ unexpose <port> [--to <key>]              Revoke; bare revokes every grant.
 project <peer> [--ip <addr>] [--as <name>]  Override the automatic projection.
 unproject <peer>                          Unbind ports, drop address and name.
 
-list                                      Peers, grants, bindings, surfaces, and
-                                          how each peer was admitted.
+list                                      Peers, their grants, where their ports
+                                          are bound, and how each was admitted.
 ```
 
 Five things are worth stating once, because every scenario below depends on
@@ -84,9 +81,9 @@ Three separate facts, and missing any one of them fails in its own way:
 3. The build box grants `8080` to my laptop. Missing, we connect cleanly and I
    am announced no ports, so the surface comes up empty.
 
-### The flow today
+### The flow before this
 
-Two values have to travel, and the flow does not actually complete:
+Two values had to travel, and the flow did not complete:
 
 ```sh
 # build box
@@ -96,58 +93,36 @@ pai-sho grant-token --label andy-laptop
 # 7fd25613...
 ```
 
-Both go to me out of band. Then, on my laptop:
+Both went to me out of band. Then, on my laptop, `pai-sho add-peer 5hc4bjqf...`,
+which did not work: `add-peer` could not present a token. `--enroll` existed
+only on `pai-sho daemon`, so a laptop already running a daemon had no way to use
+the token it had just been handed. The choice was to restart the laptop's
+daemon, or to abandon tokens and have both sides pin each other by key.
 
-```sh
-pai-sho add-peer 5hc4bjqf...
-```
+What was wrong with it:
 
-This does not work. `add-peer` cannot present a token: `--enroll` exists only on
-`pai-sho daemon`, so a laptop with a daemon already running has no way to use
-the token it was just handed. The options are to restart the laptop's daemon,
-which is not a reasonable ask when it is already serving other peers:
+- **A token was unusable by a running daemon.** Restarting a daemon to add one
+  peer is not reasonable when it is already serving others.
+- **Two values travelled for one handshake.** The key said who to dial, the
+  token proved I may. They were always used together.
+- **The grant was a separate step.** Steps 1 and 3 both happen on the build box
+  and express one intention. Split apart, the common failure was a peer that
+  connected fine and saw nothing, which reads like a bug.
+- **The inviter had to name the claimer.** `grant-token --label andy-laptop`
+  asked the build box to pick a name it would never type.
+- **Nothing said the link was mutual.** `add-peer` read like it finished the
+  job, and the failure when it did not was a log line on the other machine.
 
-```sh
-pai-sho daemon -a 5hc4bjqf... --enroll 7fd25613...
-```
-
-or to skip tokens entirely and have both sides pin each other by key:
-
-```sh
-# build box
-pai-sho pin <laptop-key> --label andy-laptop
-pai-sho expose 8080 --to <laptop-key>
-
-# laptop
-pai-sho add-peer <buildbox-key>
-```
-
-### The friction
-
-- **A token is unusable by a running daemon.** `--enroll` is a daemon flag, so
-  the only way to present one is at startup.
-- **Two values travel for one handshake.** The key says who to dial, the token
-  proves I may. They are always used together, so they should be one value.
-- **The grant is a separate step, easy to forget.** Steps 1 and 3 both happen on
-  the build box and express one intention: "andy's laptop may see the
-  dashboard." Split across two commands, the common failure is a peer that
-  connects fine and sees nothing, which reads like a bug rather than a missing
-  grant.
-- **The inviter has to name the claimer.** `grant-token --label andy-laptop`
-  asks the build box to pick a name it will never type. The name matters to me,
-  because I am the one who will type it in a URL.
-- **Nothing says the link is mutual.** `add-peer` reads like it completes the
-  job, and the failure when it does not is a log line on the other machine.
-
-### Proposed flow
+### The flow now
 
 ```sh
 # build box: hi, be friends, and you may have 8080
 pai-sho invite --expose 8080
-# psi1qy3f8k...   one-time, valid 5 minutes
+# 5hc4bjqfp6booceusm3jrfebbegyfi6aiqwbgx4xxqmpvg5usoyq.7fd25613dd5e17cb...
+# one-time, valid 5 minutes
 
 # laptop: yeah, be friends, and I will call you buildbox
-pai-sho accept psi1qy3f8k... --as buildbox
+pai-sho accept 5hc4bjqfp6...7fd25613dd... --as buildbox
 ```
 
 ```sh
@@ -156,12 +131,11 @@ curl http://buildbox.pai-sho:8080
 
 Two commands, one per machine, one value between them.
 
-- **The invite embeds the issuer's key**, so it is self-contained: it says who
-  to dial and proves I may. This is what `ticket` should have been. The current
-  `ticket()` is `endpoint.id().to_string()` with a `TODO: proper ticket
-  serialization` above it, and this is the serialization it was waiting for.
-  `key` stays as the bare identifier for the host-attested path, where a public
-  key is exactly what you want to move.
+- **The invitation is `<key>.<code>`**, so it is self-contained: it says who to
+  dial and proves I may. This is what `ticket` should have been. `ticket()` was
+  `endpoint.id().to_string()` under a `TODO: proper ticket serialization`, and
+  the word is gone: a bare key is just a key, which is what the host-attested
+  path wants to move.
 - **`--expose` on the invitation** attaches the grant to the friendship that
   justifies it. Still default deny, still directed at one key; the key is filled
   in on acceptance instead of typed twice.
@@ -185,14 +159,14 @@ on my end.
 ```sh
 # laptop
 pai-sho invite --as vibenv-ndyg
-# psi1qy3f8k...
+# 5hc4bjqfp6...7fd25613dd...
 ```
 
 The code goes into the VM's boot config, and its daemon says yes on startup:
 
 ```sh
 # vm
-pai-sho daemon --accept psi1qy3f8k... -e 3001,7331
+pai-sho daemon --accept 5hc4bjqfp6...7fd25613dd... -e 3001,7331
 ```
 
 `-e` grants those ports to the peers named by `--accept`, and to no one else. On

@@ -1,5 +1,6 @@
 //! Daemon - manages iroh endpoint, peers, and tunnels.
 
+use crate::core::invite::{Handle, Invite};
 use crate::core::session::Session;
 use crate::enroll::Pins;
 use crate::peer::PeerManager;
@@ -132,7 +133,7 @@ impl Daemon {
         });
 
         for pin in pinned {
-            if let Err(e) = daemon.peers.add_pinned(&pin.key, &pin.label) {
+            if let Err(e) = daemon.peers.add_pinned(&pin.key, pin.label.as_deref()) {
                 error!("failed to load pinned peer {}: {}", pin.key, e);
             }
         }
@@ -172,6 +173,57 @@ impl Daemon {
         self.endpoint.id().to_string()
     }
 
+    /// Extend an invitation. Addressed to a key, it authorizes that key when
+    /// it dials in and nothing secret is created. Unaddressed, it mints a
+    /// one-time code and returns the invitation to hand over.
+    async fn invite(
+        &self,
+        key: Option<String>,
+        name: Option<String>,
+        expose: Vec<u16>,
+    ) -> Response {
+        match key {
+            // Addressed to a key we already have: pin it, and grant straight
+            // away rather than deferring to a claim that will never happen.
+            Some(key) => {
+                if let Err(e) = self.peers.pin_peer(&key, name.as_deref()) {
+                    return Response::Error(e.to_string());
+                }
+                let grantee: EndpointId = match key.parse() {
+                    Ok(k) => k,
+                    Err(e) => return Response::Error(format!("invalid key: {}", e)),
+                };
+                for port in expose {
+                    if let Err(e) = self.expose(port, &[grantee]).await {
+                        return Response::Error(e.to_string());
+                    }
+                }
+                Response::Ok
+            }
+            None => {
+                let code = self.session.lock().unwrap().mint_token(name, expose);
+                Response::Invite(
+                    Invite {
+                        key: self.endpoint.id(),
+                        code,
+                    }
+                    .to_string(),
+                )
+            }
+        }
+    }
+
+    /// Take up an invitation, or reach a peer known by key. Either way we dial
+    /// and the peer becomes ours; an invitation also carries the code to
+    /// present.
+    async fn accept(&self, handle: &str, name: Option<String>) -> Result<()> {
+        let handle: Handle = handle.parse()?;
+        self.peers
+            .add_peer(handle.key(), name, handle.code())
+            .await?;
+        Ok(())
+    }
+
     /// Grant `port` to each peer in `to` and re-announce
     pub async fn expose(&self, port: u16, to: &[EndpointId]) -> Result<()> {
         self.session.lock().unwrap().expose(port, to);
@@ -204,18 +256,18 @@ impl Daemon {
                     to: to.to_string(),
                 })
                 .collect(),
-            bindings: self.peers.list_bindings().await,
         }
     }
 
     /// Handle a request from the CLI client
     pub async fn handle_request(self: &Arc<Self>, request: Request) -> Response {
         match request {
-            Request::AddPeer { ticket } => match self.peers.add_peer(&ticket, None).await {
+            Request::Invite { key, name, expose } => self.invite(key, name, expose).await,
+            Request::Accept { handle, name } => match self.accept(&handle, name).await {
                 Ok(()) => Response::Ok,
                 Err(e) => Response::Error(e.to_string()),
             },
-            Request::RemovePeer { ticket } => match self.peers.remove_peer(&ticket).await {
+            Request::Forget { peer } => match self.peers.remove_peer(&peer).await {
                 Ok(()) => Response::Ok,
                 Err(e) => Response::Error(e.to_string()),
             },
@@ -255,14 +307,7 @@ impl Daemon {
                 }
             }
             Request::List => Response::List(self.list().await),
-            Request::Ticket => Response::Ticket(self.ticket()),
-            Request::GrantToken { label } => {
-                Response::Token(self.session.lock().unwrap().mint_token(label))
-            }
-            Request::Pin { key, label } => match self.peers.pin_peer(&key, &label) {
-                Ok(()) => Response::Ok,
-                Err(e) => Response::Error(e.to_string()),
-            },
+            Request::Key => Response::Key(self.endpoint.id().to_string()),
             Request::Project { peer, ip, name } => {
                 let ip = match ip.map(|s| s.parse()).transpose() {
                     Ok(ip) => ip,
@@ -277,7 +322,6 @@ impl Daemon {
                 Ok(()) => Response::Ok,
                 Err(e) => Response::Error(e.to_string()),
             },
-            Request::Surfaces => Response::Surfaces(self.peers.surfaces().await),
         }
     }
 }
@@ -347,10 +391,9 @@ fn set_socket_mode(path: &Path, mode: &str) -> Result<()> {
 pub async fn run(
     host: IpAddr,
     socket_path: &Path,
-    peers: Vec<String>,
+    accept: Vec<String>,
     ports: Vec<u16>,
     key_path: Option<PathBuf>,
-    enroll: Option<String>,
     resolver: Option<std::net::SocketAddr>,
     tun: Option<String>,
     socket_owner: Option<String>,
@@ -411,30 +454,36 @@ pub async fn run(
         });
     }
 
-    // -e ports are granted to the -a peers: expose these ports to those
-    // peers, and to no one else
-    let grantees: Vec<EndpointId> = peers.iter().filter_map(|t| t.parse().ok()).collect();
+    // Whatever --accept named, as keys. An invitation carries the code too.
+    let handles: Vec<Handle> = accept
+        .iter()
+        .filter_map(|h| match h.parse::<Handle>() {
+            Ok(handle) => Some(handle),
+            Err(e) => {
+                error!("ignoring --accept {}: {}", h, e);
+                None
+            }
+        })
+        .collect();
+
+    // -e ports are granted to the --accept peers, and to no one else.
+    let grantees: Vec<EndpointId> = handles.iter().map(|h| h.key()).collect();
     if !ports.is_empty() && grantees.is_empty() {
-        warn!("-e given without -a: ports are granted to no one; use expose --to");
+        warn!("-e given without --accept: ports are granted to no one; use expose --to");
     }
     for &port in &ports {
         daemon.expose(port, &grantees).await?;
     }
 
-    // Add peers specified on command line, presenting the enroll token if given
-    for ticket in &peers {
-        match daemon.peers.add_peer(ticket, enroll.clone()).await {
-            Ok(()) => {
-                info!("added peer {}", ticket);
-            }
-            Err(e) => {
-                error!("failed to add peer {}: {}", ticket, e);
-            }
+    for handle in &handles {
+        let key = handle.key();
+        match daemon.peers.add_peer(key, None, handle.code()).await {
+            Ok(()) => info!("accepted {}", key),
+            Err(e) => error!("failed to accept {}: {}", key, e),
         }
     }
 
-    // Announce grants to the newly added peers
-    if !peers.is_empty() {
+    if !handles.is_empty() {
         daemon.peers.broadcast_grants().await;
     }
 
