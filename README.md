@@ -30,9 +30,13 @@ traversal, and relay fallback.
 
 Access is default deny and per peer. Each machine runs one long-lived daemon with
 a stable identity, a keypair. You grant a specific port to a specific peer's key,
-and that peer alone can reach it. A machine you have not met enrolls with a
-one-time token, so you can boot a fleet of untrusted workloads that phone home,
-each with exactly the access you granted and none aware of its siblings.
+and that peer alone can reach it. A machine you have not met gets in with a
+one-time invitation, so you can boot a fleet of untrusted workloads that phone
+home, each with exactly the access you granted and none aware of its siblings.
+
+Two machines link by invitation. One extends it, the other takes it up, and
+neither is complete alone. It works the same whether you are booting a workload
+that dials home or connecting two laptops that already exist.
 
 The peers you can reach live on a private network the daemon runs for you. Each
 one gets its own address on that network and a name to match, so you reach its
@@ -84,8 +88,11 @@ Spin up something new on the VM and expose it live:
 
 ```sh
 http-nu :3002 -c '{|req| "hello from a new experiment"}'
-pai-sho expose 3002 --to <laptop-key>
+pai-sho expose 3002 --all
 ```
+
+`--all` means every peer this VM knows right now, which is my laptop and nothing
+else. It is not a standing rule: a peer admitted later gets nothing.
 
 `vibenv-ndyg` is already on my network, so `3002` binds under it too, reachable at
 `http://vibenv-ndyg.pai-sho:3002` right away. Done with it? `pai-sho unexpose 3002`.
@@ -180,7 +187,7 @@ pai-sho [--socket <path>] <command>
 
 ```
 daemon [options]           Start the daemon
-key                        Print this daemon's key
+key                        Print this daemon's key (hand this to a peer)
 invite [<key>] [--as <n>] [--expose <port>...]
                            Extend an invitation. With a key, to that key alone
                            (host-attested, no secret). Without one, print a
@@ -195,6 +202,8 @@ unproject <peer>           Take a peer's surface down (unbind its ports)
 list                       Peers, grants, and where their ports are bound (JSON)
 ```
 
+`--socket` is global, not specific to `daemon`.
+
 ### Daemon Options
 
 | Option | Default | Description |
@@ -203,7 +212,6 @@ list                       Peers, grants, and where their ports are bound (JSON)
 | `-a, --accept` | | Take up an invitation, or a peer's key, on startup (repeatable) |
 | `-e, --expose` | | Expose port to the `--accept` peers (repeat or comma-separate) |
 | `--key` | `~/.local/state/pai-sho/key` | Secret key path (created if missing) |
-| `--socket` | `/tmp/pai-sho.sock` | Unix socket path |
 | `--tun` | | Put surfaces on a private TUN network (`utun` on macOS, a pre-created device like `ps0` on Linux); the resolver answers in-stack on `10.99.0.53:53` |
 | `--resolver` | | Loopback mode, an alternative to `--tun`: serve the `*.pai-sho` resolver on this UDP address (e.g. `127.0.0.1:5353`) |
 
@@ -229,7 +237,8 @@ who to dial, and the proof you may. When you already know a peer's key,
 
 **Forwarding.** Each peer hears only the ports granted to it, and traffic runs
 over the encrypted QUIC connection. It goes both ways: something on your own
-`:4001` becomes reachable on a peer with `pai-sho expose 4001 --to <key>`.
+`:4001` becomes reachable on a peer with `pai-sho expose 4001 --to <key>`, where
+the key comes from `pai-sho key` on the machine you are granting to.
 
 **The network.** With `--tun`, the daemon runs its own TCP/IP stack on a private
 network interface. The daemon sits at `10.99.0.1`, peers get addresses on
@@ -238,9 +247,9 @@ interface is created ahead of time and owned by the daemon's user, so the daemon
 needs no elevated capability. On macOS the daemon creates a utun itself, which
 needs root.
 
-**Surfaces.** A peer's ports are addressed together at one address, named after
-its enrollment label. A peer is projected automatically the first time it
-announces a granted port. Because each peer owns its address, two peers can serve
+**Surfaces.** A peer's ports are addressed together at one address, under the
+name you gave it, or a short form of its key if nothing named it. A peer is
+projected automatically the first time it announces a granted port. Because each peer owns its address, two peers can serve
 the same port without colliding. `project` overrides the automatic choice (pin an
 address with `--ip`, rename with `--as`), `unproject` takes a surface down, and
 projections survive a restart ([ADR 0004](docs/adr/0004-peer-surfaces.md)).
@@ -273,5 +282,15 @@ which keeps it easy to reason about exactly what is reachable.
 [dumbpipe](https://github.com/n0-computer/dumbpipe) is the direct inspiration.
 [pigeons](https://pigeons.computer), SSH over iroh from the same team, is where
 pai-sho's connection handling comes from.
+
+## More
+
+[docs/scenarios.md](docs/scenarios.md) works two flows end to end: a shared build
+box reached from a laptop, and a laptop booting a vibenv. Each says what has to
+be true, what travels between the machines, and why the commands are shaped the
+way they are.
+
+The [ADRs](docs/adr) record the decisions: directed grants, invitations,
+host-attested enrollment, peer surfaces, and the owned resolver.
 
 Questions or ideas: come by the [Discord](https://discord.com/invite/YNbScHBHrh).
