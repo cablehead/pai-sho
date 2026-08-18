@@ -22,37 +22,24 @@
   </a>
 </p>
 
-pai-sho forwards specific TCP ports between your machines over an encrypted
-peer-to-peer QUIC connection, built on
-[iroh](https://github.com/n0-computer/iroh). Neither machine needs an open
-inbound port, a public IP, or a relay you run. iroh handles discovery, NAT
-traversal, and relay fallback.
+pai-sho forwards specific TCP ports between your machines, encrypted and
+peer-to-peer, over [iroh](https://github.com/n0-computer/iroh). Neither machine
+needs an open inbound port or a public IP. iroh punches through the NAT, and
+falls back to a relay when it can't.
 
-Access is default deny and per peer. Each machine runs one long-lived daemon with
-a stable identity, a keypair. You grant a specific port to a specific peer's key,
-and that peer alone can reach it. A machine you have not met gets in with a
-one-time invitation, so you can boot a fleet of untrusted workloads that phone
-home, each with exactly the access you granted and none aware of its siblings.
+Access is default deny. You grant one port to one peer's key, and that peer
+alone can reach it. Machines link by invitation: one side extends it, the other
+takes it up.
 
-Two machines link by invitation. One extends it, the other takes it up, and
-neither is complete alone. It works the same whether you are booting a workload
-that dials home or connecting two laptops that already exist.
-
-The peers you can reach live on a private network the daemon runs for you. Each
-one gets its own address on that network and a name to match, so you reach its
-ports at `peer.pai-sho:<port>`. Two peers can serve the same port without
-clashing, because each has its own address. None of it is published to the rest
-of your machine or the rest of DNS.
-
-The case it was built for is a dedicated VM per task, a
-[vibenv](https://github.com/cablehead/vibenv.dag), with no inbound ports. Boot it,
-it dials your laptop, and the ports you care about (say a web app and a
-live-reload server) come up at `vibenv-ndyg.pai-sho:3001` and `vibenv-ndyg.pai-sho:7331`, reachable
-by you alone.
+Every peer gets its own address on a private network the daemon runs, and a name
+to match, so its ports answer at `peer.pai-sho:<port>`. Two peers can serve the
+same port without clashing. None of it reaches the rest of your DNS.
 
 ## Example
 
-On my laptop the daemon is already running on its own network interface (the
+I boot a dedicated VM per task, a
+[vibenv](https://github.com/cablehead/vibenv.dag), with no inbound ports. On my
+laptop the daemon is already running on its own network interface (the
 [Homebrew install](#install) sets that up; [Setting up the network](#setting-up-the-network)
 covers doing it by hand). I invite the VM I'm about to boot:
 
