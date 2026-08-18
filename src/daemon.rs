@@ -1,7 +1,7 @@
 //! Daemon - manages iroh endpoint, peers, and tunnels.
 
-use crate::enroll::{Pins, Tokens};
-use crate::grants::Grants;
+use crate::core::session::Session;
+use crate::enroll::Pins;
 use crate::peer::PeerManager;
 use crate::protocol::{GrantInfo, ListInfo, Request, Response, ALPN};
 use crate::surface::SurfaceStore;
@@ -13,18 +13,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
 pub struct Daemon {
     /// The iroh endpoint
     endpoint: Endpoint,
-    /// Directed grants: which port is exposed to which peer
-    grants: Arc<RwLock<Grants>>,
+    /// Admission and access decisions. Pure; see src/core/session.rs.
+    session: Arc<std::sync::Mutex<Session>>,
     /// Connected peers
     peers: Arc<PeerManager>,
-    /// Enrollment tokens minted by grant-token
-    tokens: Arc<Tokens>,
 }
 
 /// Default key location: $XDG_STATE_HOME/pai-sho/key (~/.local/state/pai-sho/key)
@@ -109,8 +106,7 @@ impl Daemon {
         name: Option<String>,
     ) -> Result<Arc<Self>> {
         let key_path = state_prefix;
-        let grants = Arc::new(RwLock::new(Grants::default()));
-        let tokens = Arc::new(Tokens::default());
+        let session = Arc::new(std::sync::Mutex::new(Session::new()));
 
         // Pins and surfaces live next to the key: <key>.peers.json,
         // <key>.surfaces.json
@@ -125,16 +121,14 @@ impl Daemon {
             peers: Arc::new(PeerManager::new(
                 endpoint.clone(),
                 host,
-                grants.clone(),
-                tokens.clone(),
+                session.clone(),
                 pins,
                 surfaces,
                 netstack,
                 name,
             )),
             endpoint,
-            grants,
-            tokens,
+            session,
         });
 
         for pin in pinned {
@@ -156,12 +150,7 @@ impl Daemon {
 
     /// Grant `port` to each peer in `to` and re-announce
     pub async fn expose(&self, port: u16, to: &[EndpointId]) -> Result<()> {
-        {
-            let mut grants = self.grants.write().await;
-            for grantee in to {
-                grants.add(port, *grantee);
-            }
-        }
+        self.session.lock().unwrap().expose(port, to);
         self.peers.broadcast_grants().await;
         info!("exposed port {} to {} peer(s)", port, to.len());
         Ok(())
@@ -169,20 +158,22 @@ impl Daemon {
 
     /// Revoke grants for `port` (all of them, or just `to`) and re-announce
     pub async fn unexpose(&self, port: u16, to: Option<EndpointId>) -> Result<()> {
-        self.grants.write().await.remove(port, to);
+        self.session.lock().unwrap().unexpose(port, to);
         self.peers.broadcast_grants().await;
         info!("unexposed port {}", port);
         Ok(())
     }
 
     pub async fn list(&self) -> ListInfo {
-        let grants = self.grants.read().await;
+        let (i_expose, all_grants) = {
+            let session = self.session.lock().unwrap();
+            (session.granted_ports(), session.all_grants())
+        };
         ListInfo {
             me: self.endpoint.id().to_string(),
             peers: self.peers.list().await,
-            i_expose: grants.ports(),
-            grants: grants
-                .all()
+            i_expose,
+            grants: all_grants
                 .into_iter()
                 .map(|(port, to)| GrantInfo {
                     port,
@@ -240,7 +231,9 @@ impl Daemon {
             }
             Request::List => Response::List(self.list().await),
             Request::Ticket => Response::Ticket(self.ticket()),
-            Request::GrantToken { label } => Response::Token(self.tokens.mint(label)),
+            Request::GrantToken { label } => {
+                Response::Token(self.session.lock().unwrap().mint_token(label))
+            }
             Request::Pin { key, label } => match self.peers.pin_peer(&key, &label) {
                 Ok(()) => Response::Ok,
                 Err(e) => Response::Error(e.to_string()),

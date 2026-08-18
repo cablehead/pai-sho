@@ -105,6 +105,8 @@ pub struct PeerInfo {
     /// Label assigned at enrollment (absent for peers added by ticket)
     pub label: Option<String>,
     pub online: bool,
+    /// How this peer came to be admitted: "added", "code", or "key"
+    pub admission: String,
     /// Ports this peer exposes to us
     pub they_expose: Vec<u16>,
 }

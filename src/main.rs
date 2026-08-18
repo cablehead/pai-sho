@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 use std::net::{IpAddr, SocketAddr};
 
 mod client;
+mod core;
 mod daemon;
 mod enroll;
 mod grants;

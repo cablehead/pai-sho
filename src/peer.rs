@@ -5,8 +5,8 @@
 //! a valid enrollment token. Anyone else is refused -- no announcement, no
 //! tunnel.
 
-use crate::enroll::{Pins, Tokens};
-use crate::grants::Grants;
+use crate::core::session::{Action, Admission, ConnId, Refusal, Session};
+use crate::enroll::Pins;
 use crate::netstack::{Accept, NetStack};
 use crate::protocol::{BindingInfo, PeerInfo, PeerMessage, SurfaceInfo, ALPN};
 use crate::surface::{self, Surface, SurfaceStore};
@@ -17,7 +17,7 @@ use iroh::endpoint::Connection;
 use iroh::{Endpoint, EndpointId};
 
 use std::net::{IpAddr, SocketAddr};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
@@ -81,12 +81,12 @@ pub struct PeerManager {
     peers: DashMap<EndpointId, Arc<Peer>>,
     /// Our endpoint (for outbound reconnection)
     endpoint: Endpoint,
-    /// Directed grants: which port is exposed to which peer
-    grants: Arc<RwLock<Grants>>,
+    /// Admission and access decisions. Pure; see src/core/session.rs.
+    session: Arc<std::sync::Mutex<Session>>,
     /// Host address for forwarding tunnel requests
     host: IpAddr,
-    /// Enrollment tokens we minted (operator side)
-    tokens: Arc<Tokens>,
+    /// Ids handed to the core for connections it has not admitted yet
+    next_conn_id: AtomicU64,
     /// Peers pinned at enrollment, persisted across restarts
     pins: Pins,
     /// Projected surfaces, persisted across restarts
@@ -107,8 +107,7 @@ impl PeerManager {
     pub fn new(
         endpoint: Endpoint,
         host: IpAddr,
-        grants: Arc<RwLock<Grants>>,
-        tokens: Arc<Tokens>,
+        session: Arc<std::sync::Mutex<Session>>,
         pins: Pins,
         surfaces: SurfaceStore,
         netstack: Option<NetStack>,
@@ -118,8 +117,8 @@ impl PeerManager {
             peers: DashMap::new(),
             endpoint,
             host,
-            grants,
-            tokens,
+            session,
+            next_conn_id: AtomicU64::new(1),
             pins,
             surfaces,
             netstack,
@@ -138,31 +137,18 @@ impl PeerManager {
     ) -> Result<()> {
         let endpoint_id: EndpointId = ticket.parse().context("invalid ticket")?;
 
-        // Check if already connected
         if self.peers.contains_key(&endpoint_id) {
             return Err(anyhow!("peer already exists"));
         }
 
-        // Connect to the peer
-        let conn = self
-            .endpoint
-            .connect(endpoint_id, ALPN)
-            .await
-            .context("failed to connect to peer")?;
+        self.session
+            .lock()
+            .unwrap()
+            .admit_known(endpoint_id, None, Admission::Added);
 
-        info!("connected to {}", endpoint_id);
-
-        let peer = Peer::new(endpoint_id, None, true, enroll_token, Some(conn.clone()));
-
-        if let Some(token) = &peer.enroll_token {
-            let msg = PeerMessage::Enroll {
-                token: token.clone(),
-            };
-            if let Err(e) = Self::send_message(&conn, &msg).await {
-                warn!("failed to send enroll token to {}: {}", endpoint_id, e);
-            }
-        }
-
+        // Record the peer before dialing. A peer whose daemon is not up yet is
+        // still ours: its connection loop retries with backoff.
+        let peer = Peer::new(endpoint_id, None, true, enroll_token, None);
         self.peers.insert(endpoint_id, peer.clone());
         self.spawn_connection_loop(peer);
 
@@ -176,6 +162,11 @@ impl PeerManager {
         if self.peers.contains_key(&endpoint_id) {
             return Ok(());
         }
+        self.session.lock().unwrap().admit_known(
+            endpoint_id,
+            Some(label.to_string()),
+            Admission::Key,
+        );
         let peer = Peer::new(endpoint_id, Some(label.to_string()), false, None, None);
         self.peers.insert(endpoint_id, peer.clone());
         self.spawn_connection_loop(peer);
@@ -211,7 +202,13 @@ impl PeerManager {
     /// Long-running task managing a peer's connection lifecycle.
     /// Runs the unified connection handler and reconnects with backoff on failure.
     async fn peer_connection_loop(manager: Arc<PeerManager>, peer: Arc<Peer>) {
-        let mut backoff = BACKOFF_INITIAL;
+        // A peer added but never dialed starts at zero, so its first dial is
+        // immediate. Backoff only applies once an attempt has failed.
+        let mut backoff = if peer.connection.read().await.is_some() {
+            BACKOFF_INITIAL
+        } else {
+            Duration::ZERO
+        };
 
         loop {
             let has_conn = peer.connection.read().await.is_some();
@@ -274,7 +271,7 @@ impl PeerManager {
                                 warn!("failed to send enroll token: {}", e);
                             }
                         }
-                        Self::send_exposed_ports_to_peer(&peer, &manager.grants).await;
+                        manager.announce_to(&peer).await;
                         backoff = BACKOFF_INITIAL;
                         break;
                     }
@@ -307,11 +304,10 @@ impl PeerManager {
                 }
                 result = conn.accept_bi() => {
                     let (send, recv) = result?;
-                    let host = manager.host;
-                    let grants = manager.grants.clone();
+                    let manager = manager.clone();
                     let peer = peer.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = Self::handle_bi_stream(host, &grants, &peer, send, recv).await {
+                        if let Err(e) = Self::handle_bi_stream(&manager, &peer, send, recv).await {
                             error!("tunnel error: {}", e);
                         }
                     });
@@ -357,8 +353,7 @@ impl PeerManager {
     }
 
     async fn handle_bi_stream(
-        host: IpAddr,
-        grants: &Arc<RwLock<Grants>>,
+        manager: &Arc<PeerManager>,
         peer: &Arc<Peer>,
         send: iroh::endpoint::SendStream,
         mut recv: iroh::endpoint::RecvStream,
@@ -366,16 +361,29 @@ impl PeerManager {
         let mut buf = [0u8; 2];
         recv.read_exact(&mut buf).await?;
         let port = u16::from_be_bytes(buf);
-        // A tunnel is served only for a port granted to this specific peer
-        if !grants.read().await.allows(port, &peer.endpoint_id) {
-            warn!(
-                "refused tunnel to ungranted port {} from {}",
-                port, peer.endpoint_id
-            );
-            return Ok(());
+
+        let verdict = manager
+            .session
+            .lock()
+            .unwrap()
+            .on_tunnel(&peer.endpoint_id, port);
+
+        match verdict {
+            Action::ServeTunnel { port } => {
+                info!("tunnel request for port {}", port);
+                tunnel::handle_tunnel(manager.host, port, send, recv).await
+            }
+            Action::RejectTunnel { reason } => {
+                warn!(
+                    "refused tunnel to port {} from {}: {}",
+                    port,
+                    peer.endpoint_id,
+                    reason.as_str()
+                );
+                Ok(())
+            }
+            other => Err(anyhow!("unexpected tunnel verdict: {:?}", other)),
         }
-        info!("tunnel request for port {}", port);
-        tunnel::handle_tunnel(host, port, send, recv).await
     }
 
     /// Update a peer's announced ports and reconcile its bindings.
@@ -590,9 +598,13 @@ impl PeerManager {
             }
         }
 
-        self.grants.write().await.revoke_grantee(endpoint_id);
-        if let Err(e) = self.pins.remove(&endpoint_id.to_string()) {
-            warn!("failed to remove pin for {}: {}", endpoint_id, e);
+        let actions = self.session.lock().unwrap().evict(endpoint_id);
+        for action in actions {
+            if let Action::DropPin { key } = action {
+                if let Err(e) = self.pins.remove(&key.to_string()) {
+                    warn!("failed to remove pin for {}: {}", key, e);
+                }
+            }
         }
         if let Err(e) = self.surfaces.remove(&endpoint_id.to_string()) {
             warn!("failed to remove surface record for {}: {}", endpoint_id, e);
@@ -619,31 +631,59 @@ impl PeerManager {
     /// valid token or are refused.
     pub async fn handle_connection(self: &Arc<Self>, conn: Connection) -> Result<()> {
         let remote_id = conn.remote_id();
+        let conn_id = ConnId(self.next_conn_id.fetch_add(1, Ordering::Relaxed));
 
-        let peer = if let Some(peer) = self.peers.get(&remote_id) {
-            // Known peer reconnecting -- close old connection, install new one
-            let mut conn_guard = peer.connection.write().await;
-            if let Some(old_conn) = conn_guard.take() {
-                old_conn.close(0u32.into(), b"replaced");
-            }
-            *conn_guard = Some(conn.clone());
-            drop(conn_guard);
+        let admission = self.session.lock().unwrap().on_inbound(conn_id, remote_id);
 
-            peer.conn_notify.notify_one();
-            info!("{} reconnected", remote_id);
-            peer.clone()
-        } else {
-            // Unknown peer: enroll with a valid token, or nothing
-            match self.handle_enrollment(conn.clone()).await? {
-                Some(peer) => peer,
-                None => return Ok(()),
-            }
+        // No verdict yet: the core is holding this connection pending a claim.
+        if admission.is_empty() {
+            return self.handle_enrollment(conn_id, conn).await;
+        }
+
+        let peer = match self.peers.get(&remote_id) {
+            Some(peer) => peer.clone(),
+            None => return Ok(()),
         };
 
-        // Send our exposed ports to this (authorized) peer
-        Self::send_exposed_ports_to_peer(&peer, &self.grants).await;
+        // Known peer reconnecting -- close old connection, install new one
+        let mut conn_guard = peer.connection.write().await;
+        if let Some(old_conn) = conn_guard.take() {
+            old_conn.close(0u32.into(), b"replaced");
+        }
+        *conn_guard = Some(conn.clone());
+        drop(conn_guard);
 
+        peer.conn_notify.notify_one();
+        info!("{} reconnected", remote_id);
+
+        self.apply(&peer, admission).await;
         Ok(())
+    }
+
+    /// Carry out the core's actions for a peer that has a live connection.
+    async fn apply(self: &Arc<Self>, peer: &Arc<Peer>, actions: Vec<Action>) {
+        for action in actions {
+            match action {
+                Action::Announce { ports, .. } => {
+                    Self::send_ports(peer, ports).await;
+                }
+                Action::ApplyPorts { ports, .. } => {
+                    self.update_peer_ports(peer, ports).await;
+                }
+                Action::PersistPin { key, label } => {
+                    if let Err(e) = self.pins.add(&key.to_string(), &label) {
+                        error!("failed to persist pin for {}: {}", key, e);
+                    }
+                }
+                Action::DropPin { key } => {
+                    if let Err(e) = self.pins.remove(&key.to_string()) {
+                        error!("failed to remove pin for {}: {}", key, e);
+                    }
+                }
+                Action::Admit { .. } | Action::Refuse { .. } => {}
+                Action::ServeTunnel { .. } | Action::RejectTunnel { .. } => {}
+            }
+        }
     }
 
     /// Wait for an unknown incoming peer to present an enrollment token.
@@ -651,57 +691,70 @@ impl PeerManager {
     /// no token, a bad token, or a timeout closes the connection without
     /// pinning or announcing anything. An enrolled peer binds nothing until
     /// it is projected, so there is no port contention to check here.
-    async fn handle_enrollment(self: &Arc<Self>, conn: Connection) -> Result<Option<Arc<Peer>>> {
+    async fn handle_enrollment(self: &Arc<Self>, conn_id: ConnId, conn: Connection) -> Result<()> {
         let remote_id = conn.remote_id();
 
-        // ExposedPorts can arrive before the Enroll message (separate uni
-        // streams); hold on to it and apply after a successful enrollment.
-        let mut early_ports: Option<Vec<u16>> = None;
-
-        let claim = tokio::time::timeout(ENROLL_TIMEOUT, async {
+        // Feed the core every control message until it admits or refuses. The
+        // ExposedPorts / Enroll order is not fixed: they arrive on separate uni
+        // streams, and the core buffers whichever lands first.
+        let verdict = tokio::time::timeout(ENROLL_TIMEOUT, async {
             loop {
                 let mut recv = conn.accept_uni().await?;
                 let data = recv.read_to_end(64 * 1024).await?;
-                match serde_json::from_slice::<PeerMessage>(&data) {
-                    Ok(PeerMessage::Enroll { token }) => {
-                        return Ok::<_, anyhow::Error>(self.tokens.claim(&token));
-                    }
-                    Ok(PeerMessage::ExposedPorts(ports)) => {
-                        early_ports = Some(ports);
-                    }
-                    _ => {}
+                let msg: PeerMessage = match serde_json::from_slice(&data) {
+                    Ok(msg) => msg,
+                    Err(_) => continue,
+                };
+                let actions = self
+                    .session
+                    .lock()
+                    .unwrap()
+                    .on_unadmitted(conn_id, remote_id, msg);
+                if !actions.is_empty() {
+                    return Ok::<_, anyhow::Error>(actions);
                 }
             }
         })
         .await;
 
-        let label = match claim {
-            Ok(Ok(Some(label))) => label,
-            _ => {
-                info!("refused unauthorized peer {}", remote_id);
-                conn.close(0u32.into(), b"not authorized");
-                return Ok(None);
-            }
+        let actions = match verdict {
+            Ok(Ok(actions)) => actions,
+            // Timed out or the stream failed: the core still holds the pending
+            // connection, so ask it for the timeout verdict.
+            _ => self.session.lock().unwrap().on_enroll_timeout(conn_id),
         };
 
-        info!("enrolled {} as \"{}\"", remote_id, label);
-        self.pins.add(&remote_id.to_string(), &label)?;
+        if let Some(Action::Refuse { reason, .. }) =
+            actions.iter().find(|a| matches!(a, Action::Refuse { .. }))
+        {
+            info!("refused peer {}: {}", remote_id, reason.as_str());
+            conn.close(0u32.into(), reason.as_str().as_bytes());
+            return Ok(());
+        }
 
-        let peer = Peer::new(remote_id, Some(label), false, None, Some(conn));
+        if !actions.iter().any(|a| matches!(a, Action::Admit { .. })) {
+            conn.close(0u32.into(), Refusal::NotAuthorized.as_str().as_bytes());
+            return Ok(());
+        }
+
+        let label = self.session.lock().unwrap().label_of(&remote_id);
+        info!(
+            "enrolled {} as \"{}\"",
+            remote_id,
+            label.clone().unwrap_or_default()
+        );
+
+        let peer = Peer::new(remote_id, label, false, None, Some(conn));
         self.peers.insert(remote_id, peer.clone());
         self.spawn_connection_loop(peer.clone());
 
-        if let Some(ports) = early_ports {
-            self.update_peer_ports(&peer, ports).await;
-        }
-
-        Ok(Some(peer))
+        self.apply(&peer, actions).await;
+        Ok(())
     }
 
-    /// Announce to a peer the ports granted to it. Always sent, even when
-    /// empty, so a revocation tears down the peer's binding.
-    async fn send_exposed_ports_to_peer(peer: &Peer, grants: &Arc<RwLock<Grants>>) {
-        let ports = grants.read().await.ports_for(&peer.endpoint_id);
+    /// Send a peer its port list. Always sent, even when empty, so a
+    /// revocation tears down the peer's binding.
+    async fn send_ports(peer: &Peer, ports: Vec<u16>) {
         let msg = PeerMessage::ExposedPorts(ports);
 
         let conn = peer.connection.read().await;
@@ -712,10 +765,19 @@ impl PeerManager {
         }
     }
 
+    /// Announce to one peer the ports granted to it.
+    async fn announce_to(&self, peer: &Peer) {
+        let ports = match self.session.lock().unwrap().announce(peer.endpoint_id) {
+            Action::Announce { ports, .. } => ports,
+            _ => return,
+        };
+        Self::send_ports(peer, ports).await;
+    }
+
     /// Re-announce grants to every connected peer (each gets its own view)
     pub async fn broadcast_grants(&self) {
         for entry in self.peers.iter() {
-            Self::send_exposed_ports_to_peer(entry.value(), &self.grants).await;
+            self.announce_to(entry.value()).await;
         }
     }
 
@@ -735,10 +797,18 @@ impl PeerManager {
                     .map(|c| c.close_reason().is_none())
                     .unwrap_or(false)
             };
+            let admission = self
+                .session
+                .lock()
+                .unwrap()
+                .admission_of(&peer.endpoint_id)
+                .map(|a| a.as_str())
+                .unwrap_or("unknown");
             result.push(PeerInfo {
                 key: peer.endpoint_id.to_string(),
                 label: peer.label.clone(),
                 online: connected,
+                admission: admission.to_string(),
                 they_expose: peer.exposed_ports.read().await.clone(),
             });
         }
