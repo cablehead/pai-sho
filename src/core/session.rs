@@ -94,7 +94,10 @@ pub enum Action {
     /// Refuse a tunnel.
     RejectTunnel { reason: Refusal },
     /// Write this pin to disk.
-    PersistPin { key: EndpointId, label: String },
+    PersistPin {
+        key: EndpointId,
+        label: Option<String>,
+    },
     /// Drop this pin from disk.
     DropPin { key: EndpointId },
 }
@@ -173,7 +176,7 @@ impl Session {
     ) -> Vec<Action> {
         match msg {
             PeerMessage::Enroll { token } => match self.tokens.claim(&token) {
-                Some(label) => {
+                Some(claimed) => {
                     let early = self
                         .pending
                         .remove(&conn)
@@ -182,7 +185,7 @@ impl Session {
                     self.peers.insert(
                         remote,
                         Admitted {
-                            label: Some(label.clone()),
+                            label: claimed.name.clone(),
                             admission: Admission::Code,
                         },
                     );
@@ -192,7 +195,10 @@ impl Session {
                             peer: remote,
                             replacing: false,
                         },
-                        Action::PersistPin { key: remote, label },
+                        Action::PersistPin {
+                            key: remote,
+                            label: claimed.name,
+                        },
                     ];
                     if !early.is_empty() {
                         actions.push(Action::ApplyPorts {
@@ -298,8 +304,8 @@ impl Session {
         self.peers.get(peer).and_then(|p| p.label.clone())
     }
 
-    pub fn mint_token(&self, label: String) -> String {
-        self.tokens.mint(label)
+    pub fn mint_token(&self, name: Option<String>) -> String {
+        self.tokens.mint(name)
     }
 
     pub fn granted_ports(&self) -> Vec<u16> {
@@ -473,7 +479,7 @@ mod tests {
     fn a_valid_code_admits_and_pins() {
         let mut s = Session::new();
         let (conn, k) = (ConnId(1), key(9));
-        let token = s.mint_token("rustdev".into());
+        let token = s.mint_token(Some("rustdev".into()));
         s.on_inbound(conn, k);
 
         let actions = s.on_unadmitted(conn, k, PeerMessage::Enroll { token });
@@ -487,7 +493,7 @@ mod tests {
                 },
                 Action::PersistPin {
                     key: k,
-                    label: "rustdev".into()
+                    label: Some("rustdev".into())
                 },
                 Action::Announce {
                     peer: k,
@@ -502,7 +508,7 @@ mod tests {
     #[test]
     fn a_code_is_single_use() {
         let mut s = Session::new();
-        let token = s.mint_token("rustdev".into());
+        let token = s.mint_token(Some("rustdev".into()));
         let first = key(1);
         s.on_inbound(ConnId(1), first);
         s.on_unadmitted(
@@ -542,7 +548,7 @@ mod tests {
     fn ports_announced_before_the_claim_are_applied_after_it() {
         let mut s = Session::new();
         let (conn, k) = (ConnId(1), key(9));
-        let token = s.mint_token("rustdev".into());
+        let token = s.mint_token(Some("rustdev".into()));
         s.on_inbound(conn, k);
         s.on_unadmitted(conn, k, PeerMessage::ExposedPorts(vec![4000, 4001]));
 

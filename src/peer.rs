@@ -131,16 +131,15 @@ impl PeerManager {
         }
     }
 
-    /// Add a new peer and connect to it. If `enroll_token` is set, present
-    /// it on connect and on every reconnect (the peer ignores it once we
-    /// are pinned).
+    /// Take up an invitation, or reach a peer known by key. We dial this peer
+    /// and keep dialing it. A code, when there is one, is presented on connect
+    /// and on every reconnect (the peer ignores it once we are known).
     pub async fn add_peer(
         self: &Arc<Self>,
-        ticket: &str,
-        enroll_token: Option<String>,
+        endpoint_id: EndpointId,
+        name: Option<String>,
+        code: Option<String>,
     ) -> Result<()> {
-        let endpoint_id: EndpointId = ticket.parse().context("invalid ticket")?;
-
         if self.peers.contains_key(&endpoint_id) {
             return Err(anyhow!("peer already exists"));
         }
@@ -148,11 +147,11 @@ impl PeerManager {
         self.session
             .lock()
             .unwrap()
-            .admit_known(endpoint_id, None, Admission::Added);
+            .admit_known(endpoint_id, name.clone(), Admission::Added);
 
         // Record the peer before dialing. A peer whose daemon is not up yet is
         // still ours: its connection loop retries with backoff.
-        let peer = Peer::new(endpoint_id, None, true, enroll_token, None);
+        let peer = Peer::new(endpoint_id, name, true, code, None);
         self.peers.insert(endpoint_id, peer.clone());
         self.spawn_connection_loop(peer);
 
@@ -161,29 +160,29 @@ impl PeerManager {
 
     /// Register a peer pinned at a previous enrollment (loaded at startup).
     /// We never dial it -- it phones home.
-    pub fn add_pinned(self: &Arc<Self>, key: &str, label: &str) -> Result<()> {
-        let endpoint_id: EndpointId = key.parse().context("invalid pinned key")?;
+    pub fn add_pinned(self: &Arc<Self>, key: &str, name: Option<&str>) -> Result<()> {
+        let endpoint_id: EndpointId = key.parse().context("invalid key")?;
         if self.peers.contains_key(&endpoint_id) {
             return Ok(());
         }
-        self.session.lock().unwrap().admit_known(
-            endpoint_id,
-            Some(label.to_string()),
-            Admission::Key,
-        );
-        let peer = Peer::new(endpoint_id, Some(label.to_string()), false, None, None);
+        let name = name.map(|n| n.to_string());
+        self.session
+            .lock()
+            .unwrap()
+            .admit_known(endpoint_id, name.clone(), Admission::Key);
+        let peer = Peer::new(endpoint_id, name, false, None, None);
         self.peers.insert(endpoint_id, peer.clone());
         self.spawn_connection_loop(peer);
-        info!("pinned peer {} (\"{}\")", endpoint_id, label);
+        info!("invited peer {}", endpoint_id);
         Ok(())
     }
 
     /// Pin a peer by key under a label without a token (host-attested
     /// enrollment): register it live so it is authorized when it phones
     /// home, and persist the pin across restarts. Idempotent.
-    pub fn pin_peer(self: &Arc<Self>, key: &str, label: &str) -> Result<()> {
-        self.add_pinned(key, label)?;
-        self.pins.add(key, label)
+    pub fn pin_peer(self: &Arc<Self>, key: &str, name: Option<&str>) -> Result<()> {
+        self.add_pinned(key, name)?;
+        self.pins.add(key, name)
     }
 
     /// Send a control message on a new uni stream
@@ -633,9 +632,11 @@ impl PeerManager {
         info!("evicted peer {} ({})", endpoint_id, reason);
     }
 
-    /// Remove a peer by ticket
-    pub async fn remove_peer(&self, ticket: &str) -> Result<()> {
-        let endpoint_id: EndpointId = ticket.parse().context("invalid ticket")?;
+    /// Forget a peer, named by key or by the name we gave it.
+    pub async fn remove_peer(&self, peer_ref: &str) -> Result<()> {
+        let endpoint_id = self
+            .resolve_peer(peer_ref)
+            .ok_or_else(|| anyhow!("no such peer: {}", peer_ref))?;
 
         if !self.peers.contains_key(&endpoint_id) {
             return Err(anyhow!("peer not found"));
@@ -691,7 +692,7 @@ impl PeerManager {
                     self.update_peer_ports(peer, ports).await;
                 }
                 Action::PersistPin { key, label } => {
-                    if let Err(e) = self.pins.add(&key.to_string(), &label) {
+                    if let Err(e) = self.pins.add(&key.to_string(), label.as_deref()) {
                         error!("failed to persist pin for {}: {}", key, e);
                     }
                 }

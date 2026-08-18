@@ -113,23 +113,30 @@ async fn pair(host: IpAddr) -> (TestDaemon, TestDaemon) {
     (a, b)
 }
 
-/// Enroll `b` with `a` by minting a code on `a` and having `b` present it.
-async fn enroll(a: &TestDaemon, b: &TestDaemon, label: &str) {
-    let token = match a
-        .request(Request::GrantToken {
-            label: label.to_string(),
+/// Link `b` to `a` the way an operator would: `a` extends an invitation and
+/// `b` takes it up.
+async fn enroll(a: &TestDaemon, b: &TestDaemon, name: &str) {
+    let invite = match a
+        .request(Request::Invite {
+            key: None,
+            name: Some(name.to_string()),
         })
         .await
     {
-        Response::Token(t) => t,
-        other => panic!("expected a token, got {:?}", other),
+        Response::Invite(i) => i,
+        other => panic!("expected an invitation, got {:?}", other),
     };
 
-    b.daemon
-        .peers()
-        .add_peer(&a.key(), Some(token))
+    match b
+        .request(Request::Accept {
+            handle: invite,
+            name: Some("a".to_string()),
+        })
         .await
-        .unwrap();
+    {
+        Response::Ok => {}
+        other => panic!("accept failed: {:?}", other),
+    }
 }
 
 /// A TCP echo server on 127.0.0.1, standing in for whatever a daemon forwards
@@ -260,8 +267,12 @@ async fn a_peer_with_no_grant_is_told_nothing() {
 async fn an_unenrolled_peer_is_refused() {
     let (a, b) = pair(IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
 
-    // b dials a with no code. a admits nothing.
-    b.daemon.peers().add_peer(&a.key(), None).await.unwrap();
+    // b reaches for a by key alone, with no invitation. a admits nothing.
+    b.request(Request::Accept {
+        handle: a.key(),
+        name: None,
+    })
+    .await;
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -305,7 +316,11 @@ async fn a_peer_added_before_its_daemon_is_up_is_still_recorded() {
 
     // A key that resolves to nothing: the dial cannot succeed.
     let absent = iroh::SecretKey::from_bytes(&[7u8; 32]).public().to_string();
-    b.daemon.peers().add_peer(&absent, None).await.unwrap();
+    b.request(Request::Accept {
+        handle: absent.clone(),
+        name: None,
+    })
+    .await;
 
     let peers = b.daemon.peers().list().await;
     assert_eq!(peers.len(), 1);

@@ -38,9 +38,9 @@ pub enum Command {
         /// Host address for forwarding exposed ports
         #[arg(long, default_value = "127.0.0.1")]
         host: IpAddr,
-        /// Add peer(s) on startup
-        #[arg(short = 'a', long = "add")]
-        peers: Vec<String>,
+        /// Accept an invitation, or a peer's key, on startup (repeatable)
+        #[arg(short = 'a', long = "accept")]
+        accept: Vec<String>,
         /// Expose port(s) on startup (repeat or comma-separate)
         #[arg(short = 'e', long = "expose", value_delimiter = ',')]
         ports: Vec<u16>,
@@ -48,9 +48,6 @@ pub enum Command {
         /// Defaults to $XDG_STATE_HOME/pai-sho/key (~/.local/state/pai-sho/key)
         #[arg(long = "key")]
         key_path: Option<std::path::PathBuf>,
-        /// One-time enrollment token to present to added peers
-        #[arg(long)]
-        enroll: Option<String>,
         /// Serve the owned `*.pai-sho` resolver on this UDP address (e.g.
         /// 127.0.0.1:5353). Off when omitted.
         #[arg(long)]
@@ -73,16 +70,30 @@ pub enum Command {
         name: Option<String>,
     },
 
-    /// Add a peer (returns assigned IP)
-    AddPeer {
-        /// Peer's ticket (endpoint ID)
-        ticket: String,
+    /// Extend an invitation. With a key, to that key alone. Without one,
+    /// prints a one-time invitation valid for 5 minutes.
+    Invite {
+        /// Peer's key, when you already know it and nothing secret can travel
+        /// to it. See docs/adr/0003-host-attested-enrollment.md
+        key: Option<String>,
+        /// What to call the peer that takes this up
+        #[arg(long = "as")]
+        name: Option<String>,
     },
 
-    /// Remove a peer
-    RemovePeer {
-        /// Peer's ticket
-        ticket: String,
+    /// Take up an invitation, or reach a peer you know by key
+    Accept {
+        /// An invitation, or a bare key
+        handle: String,
+        /// What to call this peer locally
+        #[arg(long = "as")]
+        name: Option<String>,
+    },
+
+    /// Forget a peer: close it, unbind its ports, revoke its grants
+    Forget {
+        /// Peer to forget (a key or a name)
+        peer: String,
     },
 
     /// Expose a port to specific peers (a directed grant)
@@ -109,27 +120,8 @@ pub enum Command {
     /// List peers, exposed ports, and bindings
     List,
 
-    /// Print daemon's ticket
-    Ticket,
-
-    /// Mint a one-time enrollment token (valid 5 minutes)
-    GrantToken {
-        /// Label to pin the enrolling peer under
-        #[arg(long)]
-        label: String,
-    },
-
-    /// Pin a peer by its key under a label, no token (host-attested
-    /// enrollment). The key is authorized when the peer dials in; nothing
-    /// secret travels into the workload. See
-    /// docs/adr/0003-host-attested-enrollment.md.
-    Pin {
-        /// Peer's key (endpoint ID), e.g. reported by the workload over vsock
-        key: String,
-        /// Label to pin the peer under
-        #[arg(long)]
-        label: String,
-    },
+    /// Print this daemon's key
+    Key,
 
     /// Project a peer's surface to a local address so its ports are reachable.
     /// See docs/adr/0004-peer-surfaces.md.
@@ -170,10 +162,9 @@ async fn main() -> Result<()> {
     match cli.command {
         Command::Daemon {
             host,
-            peers,
+            accept,
             ports,
             key_path,
-            enroll,
             resolver,
             tun,
             socket_owner,
@@ -183,10 +174,9 @@ async fn main() -> Result<()> {
             daemon::run(
                 host,
                 socket_path,
-                peers,
+                accept,
                 ports,
                 key_path,
-                enroll,
                 resolver,
                 tun,
                 socket_owner,

@@ -12,11 +12,20 @@ pub const ALPN: &[u8] = b"PAI_SHO/1";
 /// Request from CLI client to daemon
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Request {
-    AddPeer {
-        ticket: String,
+    /// Extend an invitation. With a key, address it to that key and return
+    /// nothing; without one, mint a code and return the invitation.
+    Invite {
+        key: Option<String>,
+        name: Option<String>,
     },
-    RemovePeer {
-        ticket: String,
+    /// Take up an invitation, or reach a peer known by key
+    Accept {
+        handle: String,
+        name: Option<String>,
+    },
+    /// Forget a peer
+    Forget {
+        peer: String,
     },
     /// Grant `port` to `to`, or to every peer known right now when `all`
     Expose {
@@ -30,15 +39,8 @@ pub enum Request {
         to: Option<String>,
     },
     List,
-    Ticket,
-    GrantToken {
-        label: String,
-    },
-    /// Pin a peer's key under a label without a token (host-attested)
-    Pin {
-        key: String,
-        label: String,
-    },
+    /// Print this daemon's key
+    Key,
     /// Project a peer's surface to a local address. `peer` is a key or label;
     /// `ip` is chosen if given, else allocated; `name` adds a /etc/hosts handle.
     Project {
@@ -58,9 +60,9 @@ pub enum Request {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Response {
     Ok,
-    Ticket(String),
+    Key(String),
     List(ListInfo),
-    Token(String),
+    Invite(String),
     Surfaces(Vec<SurfaceInfo>),
     Error(String),
 }

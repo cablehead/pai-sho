@@ -9,14 +9,13 @@ use tokio::net::UnixStream;
 
 pub async fn send_command(socket_path: &Path, command: Command) -> Result<()> {
     let request = match command {
-        Command::AddPeer { ticket } => Request::AddPeer { ticket },
-        Command::RemovePeer { ticket } => Request::RemovePeer { ticket },
+        Command::Invite { key, name } => Request::Invite { key, name },
+        Command::Accept { handle, name } => Request::Accept { handle, name },
+        Command::Forget { peer } => Request::Forget { peer },
         Command::Expose { port, to, all } => Request::Expose { port, to, all },
         Command::Unexpose { port, to } => Request::Unexpose { port, to },
         Command::List => Request::List,
-        Command::Ticket => Request::Ticket,
-        Command::GrantToken { label } => Request::GrantToken { label },
-        Command::Pin { key, label } => Request::Pin { key, label },
+        Command::Key => Request::Key,
         Command::Project { peer, ip, name } => Request::Project {
             peer,
             ip: ip.map(|ip| ip.to_string()),
@@ -47,8 +46,8 @@ pub async fn send_command(socket_path: &Path, command: Command) -> Result<()> {
     // Print response
     match response {
         Response::Ok => println!("OK"),
-        Response::Ticket(ticket) => println!("{}", ticket),
-        Response::Token(token) => println!("{}", token),
+        Response::Key(key) => println!("{}", key),
+        Response::Invite(invite) => println!("{}", invite),
         Response::List(info) => {
             println!("{}", serde_json::to_string_pretty(&info)?);
         }
