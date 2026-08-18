@@ -77,6 +77,8 @@ fn load_or_create_key(path: &Path) -> Result<SecretKey> {
 }
 
 impl Daemon {
+    /// Build a daemon on a production endpoint: the n0 preset, which uses
+    /// public relays and n0 DNS discovery.
     pub async fn new(
         host: IpAddr,
         key_path: &Path,
@@ -92,6 +94,21 @@ impl Daemon {
             .await
             .context("failed to create iroh endpoint")?;
 
+        Self::with_endpoint(endpoint, host, key_path, netstack, name).await
+    }
+
+    /// Build a daemon on an endpoint the caller already bound. Tests use this
+    /// to supply a loopback endpoint with relays disabled, so no code path
+    /// reaches the network. `state_prefix` is where pins and surfaces are
+    /// persisted: `<prefix>.peers.json` and `<prefix>.surfaces.json`.
+    pub async fn with_endpoint(
+        endpoint: Endpoint,
+        host: IpAddr,
+        state_prefix: &Path,
+        netstack: Option<crate::netstack::NetStack>,
+        name: Option<String>,
+    ) -> Result<Arc<Self>> {
+        let key_path = state_prefix;
         let grants = Arc::new(RwLock::new(Grants::default()));
         let tokens = Arc::new(Tokens::default());
 
