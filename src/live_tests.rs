@@ -312,3 +312,39 @@ async fn a_peer_added_before_its_daemon_is_up_is_still_recorded() {
     assert_eq!(peers[0].key, absent);
     assert!(!peers[0].online);
 }
+
+#[tokio::test]
+async fn a_port_blocked_at_first_still_binds() {
+    let port = echo_server().await;
+    let (a, b) = pair(IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
+    enroll(&a, &b, "b").await;
+
+    // Occupy the address b will project onto, so its first bind attempt
+    // fails. b announces nothing new afterwards, so without a retry the port
+    // would stay dark.
+    let blocker = TcpListener::bind(SocketAddr::from((
+        IpAddr::V4(Ipv4Addr::new(127, 0, 1, 2)),
+        port,
+    )))
+    .await
+    .unwrap();
+
+    a.request(Request::Expose {
+        port,
+        to: vec![b.key()],
+        all: false,
+    })
+    .await;
+
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        drop(blocker);
+    });
+
+    let addr = bound_addr(&b, port).await;
+    let mut sock = TcpStream::connect(addr).await.unwrap();
+    sock.write_all(b"late").await.unwrap();
+    let mut buf = [0u8; 4];
+    sock.read_exact(&mut buf).await.unwrap();
+    assert_eq!(&buf, b"late");
+}

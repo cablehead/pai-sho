@@ -28,6 +28,10 @@ const BACKOFF_INITIAL: Duration = Duration::from_secs(1);
 const BACKOFF_MAX: Duration = Duration::from_secs(60);
 /// How long an unknown incoming peer gets to present its enrollment token
 const ENROLL_TIMEOUT: Duration = Duration::from_secs(10);
+/// How many times to try binding a forwarded port before giving up
+const BIND_ATTEMPTS: u32 = 5;
+/// Delay between bind attempts
+const BIND_RETRY_DELAY: Duration = Duration::from_millis(200);
 
 /// Info about a connected peer
 struct Peer {
@@ -460,8 +464,13 @@ impl PeerManager {
         Some(ip)
     }
 
-    /// Bind one forwarded port under `ip` and record the binding. A failed
-    /// bind is logged and leaves no phantom entry, so the next announce retries.
+    /// Bind one forwarded port under `ip` and record the binding.
+    ///
+    /// A bind can fail transiently: the surface address was just claimed, or
+    /// the previous listener on that port has not finished closing. Retry a
+    /// few times before giving up, because there is no announce to fall back
+    /// on. A peer whose port set does not change never re-announces, so a port
+    /// dropped here would stay dark for the life of the connection.
     async fn bind_one(&self, peer: &Arc<Peer>, ip: IpAddr, port: u16) {
         // TUN backend: register a listener with the userspace stack. The
         // accept -> QUIC splice happens in run_netstack_accepts. A resident
@@ -478,21 +487,32 @@ impl PeerManager {
         }
 
         let addr = SocketAddr::from((ip, port));
-        match tunnel::bind_listener(addr).await {
-            Ok(listener) => {
-                let peer_clone = peer.clone();
-                let handle = tokio::spawn(async move {
-                    if let Err(e) = tunnel::serve_listener(listener, port, &peer_clone).await {
-                        error!("serving {} failed: {}", addr, e);
-                    }
-                });
-                peer.bindings.insert(port, handle);
-                info!("bound {}", addr);
+        let mut last_err = None;
+        for attempt in 0..BIND_ATTEMPTS {
+            if attempt > 0 {
+                tokio::time::sleep(BIND_RETRY_DELAY).await;
             }
-            Err(e) => {
-                error!("failed to bind {}: {}", addr, e);
+            match tunnel::bind_listener(addr).await {
+                Ok(listener) => {
+                    let peer_clone = peer.clone();
+                    let handle = tokio::spawn(async move {
+                        if let Err(e) = tunnel::serve_listener(listener, port, &peer_clone).await {
+                            error!("serving {} failed: {}", addr, e);
+                        }
+                    });
+                    peer.bindings.insert(port, handle);
+                    info!("bound {}", addr);
+                    return;
+                }
+                Err(e) => last_err = Some(e),
             }
         }
+        error!(
+            "failed to bind {} after {} attempts: {}",
+            addr,
+            BIND_ATTEMPTS,
+            last_err.map(|e| e.to_string()).unwrap_or_default()
+        );
     }
 
     /// Release one binding, waiting for its task to finish so the listener is
