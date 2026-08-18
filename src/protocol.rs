@@ -18,10 +18,11 @@ pub enum Request {
     RemovePeer {
         ticket: String,
     },
-    /// Grant `port` to `to`; empty `to` grants to all currently known peers
+    /// Grant `port` to `to`, or to every peer known right now when `all`
     Expose {
         port: u16,
         to: Vec<String>,
+        all: bool,
     },
     /// Revoke grants for `port`; `to` limits it to one grantee
     Unexpose {
@@ -105,6 +106,8 @@ pub struct PeerInfo {
     /// Label assigned at enrollment (absent for peers added by ticket)
     pub label: Option<String>,
     pub online: bool,
+    /// How this peer came to be admitted: "added", "code", or "key"
+    pub admission: String,
     /// Ports this peer exposes to us
     pub they_expose: Vec<u16>,
 }
