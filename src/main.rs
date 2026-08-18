@@ -257,4 +257,82 @@ mod cli_tests {
             _ => panic!("wrong command"),
         }
     }
+
+    #[test]
+    fn invite_needs_nothing() {
+        let cli = parse(&["pai-sho", "invite"]).unwrap();
+        match cli.command {
+            Command::Invite { key, name, expose } => {
+                assert!(key.is_none());
+                assert!(name.is_none());
+                assert!(expose.is_empty());
+            }
+            _ => panic!("wrong command"),
+        }
+    }
+
+    #[test]
+    fn invite_takes_a_key_a_name_and_ports() {
+        let cli = parse(&[
+            "pai-sho",
+            "invite",
+            "abc",
+            "--as",
+            "rustdev",
+            "--expose",
+            "3001,7331",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Invite { key, name, expose } => {
+                assert_eq!(key, Some("abc".to_string()));
+                assert_eq!(name, Some("rustdev".to_string()));
+                assert_eq!(expose, vec![3001, 7331]);
+            }
+            _ => panic!("wrong command"),
+        }
+    }
+
+    #[test]
+    fn accept_needs_a_handle() {
+        assert!(parse(&["pai-sho", "accept"]).is_err());
+    }
+
+    #[test]
+    fn accept_takes_a_handle_and_a_name() {
+        let cli = parse(&["pai-sho", "accept", "abc.def", "--as", "buildbox"]).unwrap();
+        match cli.command {
+            Command::Accept { handle, name } => {
+                assert_eq!(handle, "abc.def");
+                assert_eq!(name, Some("buildbox".to_string()));
+            }
+            _ => panic!("wrong command"),
+        }
+    }
+
+    #[test]
+    fn the_old_names_are_gone() {
+        for old in [
+            "ticket",
+            "grant-token",
+            "pin",
+            "add-peer",
+            "remove-peer",
+            "surfaces",
+        ] {
+            assert!(parse(&["pai-sho", old]).is_err(), "{} still parses", old);
+        }
+    }
+
+    #[test]
+    fn the_daemon_accepts_invitations() {
+        let cli = parse(&["pai-sho", "daemon", "--accept", "abc.def", "-e", "3001"]).unwrap();
+        match cli.command {
+            Command::Daemon { accept, ports, .. } => {
+                assert_eq!(accept, vec!["abc.def".to_string()]);
+                assert_eq!(ports, vec![3001]);
+            }
+            _ => panic!("wrong command"),
+        }
+    }
 }
