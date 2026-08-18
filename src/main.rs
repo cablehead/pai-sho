@@ -7,6 +7,8 @@ mod core;
 mod daemon;
 mod enroll;
 mod grants;
+#[cfg(test)]
+mod live_tests;
 mod netstack;
 mod peer;
 mod protocol;
@@ -202,7 +204,7 @@ async fn main() -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
+mod cli_tests {
     use super::*;
     use clap::Parser;
 

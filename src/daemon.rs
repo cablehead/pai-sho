@@ -143,6 +143,30 @@ impl Daemon {
         Ok(daemon)
     }
 
+    /// Accept peer connections via iroh's Router: it runs the accept loop,
+    /// routes the ALPN to the peer manager, and drains in-flight connections on
+    /// shutdown.
+    pub fn spawn_router(&self) -> Router {
+        Router::builder(self.endpoint.clone())
+            .accept(
+                ALPN,
+                PaiShoProtocol {
+                    peers: self.peers.clone(),
+                },
+            )
+            .spawn()
+    }
+
+    #[cfg(test)]
+    pub fn endpoint(&self) -> &Endpoint {
+        &self.endpoint
+    }
+
+    #[cfg(test)]
+    pub fn peers(&self) -> &Arc<PeerManager> {
+        &self.peers
+    }
+
     pub fn ticket(&self) -> String {
         // TODO: proper ticket serialization
         self.endpoint.id().to_string()
@@ -414,16 +438,7 @@ pub async fn run(
         daemon.peers.broadcast_grants().await;
     }
 
-    // Accept peer connections via iroh's Router: it runs the accept loop, routes
-    // the ALPN to the peer manager, and drains in-flight connections on shutdown.
-    let router = Router::builder(daemon.endpoint.clone())
-        .accept(
-            ALPN,
-            PaiShoProtocol {
-                peers: daemon.peers.clone(),
-            },
-        )
-        .spawn();
+    let router = daemon.spawn_router();
 
     // Listen for CLI commands on Unix socket
     let listener = UnixListener::bind(socket_path).context("failed to bind Unix socket")?;
