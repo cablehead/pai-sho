@@ -11,7 +11,7 @@ pub async fn send_command(socket_path: &Path, command: Command) -> Result<()> {
     let request = match command {
         Command::AddPeer { ticket } => Request::AddPeer { ticket },
         Command::RemovePeer { ticket } => Request::RemovePeer { ticket },
-        Command::Expose { port, to } => Request::Expose { port, to },
+        Command::Expose { port, to, all } => Request::Expose { port, to, all },
         Command::Unexpose { port, to } => Request::Unexpose { port, to },
         Command::List => Request::List,
         Command::Ticket => Request::Ticket,

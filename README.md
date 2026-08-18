@@ -85,7 +85,7 @@ Spin up something new on the VM and expose it live:
 
 ```sh
 http-nu :3002 -c '{|req| "hello from a new experiment"}'
-pai-sho expose 3002
+pai-sho expose 3002 --all
 ```
 
 `vibenv-ndyg` is already on my network, so `3002` binds under it too, reachable at
@@ -186,7 +186,7 @@ grant-token --label <l>    Mint a one-time enrollment token (valid 5 min)
 pin <key> --label <l>      Enroll a peer by key, no token (host-attested)
 add-peer <ticket>          Connect to a peer
 remove-peer <ticket>       Disconnect from a peer (and drop its pin)
-expose <port> [--to <key>] Grant a local port to peers (default: all known)
+expose <port> (--to <key> | --all)  Grant a local port to named peers
 unexpose <port> [--to <k>] Revoke grants for a port (or one peer's grant)
 project <peer> [--ip <a>] [--as <name>]  Bind a peer's ports at a local address
 unproject <peer>           Take a peer's surface down (unbind its ports)
@@ -228,7 +228,7 @@ already know a peer's key, `pin` does the same without a token
 
 **Forwarding.** Each peer hears only the ports granted to it, and traffic runs
 over the encrypted QUIC connection. It goes both ways: something on your own
-`:4001` becomes reachable on a peer with `pai-sho expose 4001`.
+`:4001` becomes reachable on a peer with `pai-sho expose 4001 --to <key>`.
 
 **The network.** With `--tun`, the daemon runs its own TCP/IP stack on a private
 network interface. The daemon sits at `10.99.0.1`, peers get addresses on

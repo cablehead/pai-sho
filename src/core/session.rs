@@ -285,6 +285,11 @@ impl Session {
 
     // ------------------------------------------------------------------ queries
 
+    /// Every peer admitted right now.
+    pub fn peer_keys(&self) -> Vec<EndpointId> {
+        self.peers.keys().copied().collect()
+    }
+
     pub fn admission_of(&self, peer: &EndpointId) -> Option<Admission> {
         self.peers.get(peer).map(|p| p.admission)
     }

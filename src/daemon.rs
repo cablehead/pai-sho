@@ -195,12 +195,13 @@ impl Daemon {
                 Ok(()) => Response::Ok,
                 Err(e) => Response::Error(e.to_string()),
             },
-            Request::Expose { port, to } => {
-                // Explicit grantees, or every currently known peer
-                let grantees: Result<Vec<EndpointId>> = if to.is_empty() {
-                    let ids = self.peers.peer_ids();
+            Request::Expose { port, to, all } => {
+                // A grant always names its grantees. --all names every peer
+                // known at this moment; it is not a standing rule.
+                let grantees: Result<Vec<EndpointId>> = if all {
+                    let ids = self.session.lock().unwrap().peer_keys();
                     if ids.is_empty() {
-                        Err(anyhow!("no peers to grant to; use --to <key>"))
+                        Err(anyhow!("no peers to grant to"))
                     } else {
                         Ok(ids)
                     }

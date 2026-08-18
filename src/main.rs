@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{ArgGroup, Parser, Subcommand};
 use std::net::{IpAddr, SocketAddr};
 
 mod client;
@@ -84,11 +84,16 @@ pub enum Command {
     },
 
     /// Expose a port to specific peers (a directed grant)
+    #[command(group = ArgGroup::new("grantees").required(true).args(["to", "all"]))]
     Expose {
         port: u16,
-        /// Peer key(s) to grant the port to; defaults to all known peers
+        /// Peer key(s) to grant the port to
         #[arg(long = "to")]
         to: Vec<String>,
+        /// Grant to every peer known right now. Not a standing rule: a peer
+        /// admitted later gets nothing.
+        #[arg(long = "all")]
+        all: bool,
     },
 
     /// Revoke grants for a port
@@ -194,4 +199,70 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
+        Cli::try_parse_from(args)
+    }
+
+    #[test]
+    fn expose_needs_a_grantee() {
+        assert!(parse(&["pai-sho", "expose", "5555"]).is_err());
+    }
+
+    #[test]
+    fn expose_takes_a_named_peer() {
+        let cli = parse(&["pai-sho", "expose", "5555", "--to", "abc"]).unwrap();
+        match cli.command {
+            Command::Expose { port, to, all } => {
+                assert_eq!(port, 5555);
+                assert_eq!(to, vec!["abc".to_string()]);
+                assert!(!all);
+            }
+            _ => panic!("wrong command"),
+        }
+    }
+
+    #[test]
+    fn expose_takes_several_named_peers() {
+        let cli = parse(&["pai-sho", "expose", "5555", "--to", "a", "--to", "b"]).unwrap();
+        match cli.command {
+            Command::Expose { to, .. } => assert_eq!(to, vec!["a".to_string(), "b".to_string()]),
+            _ => panic!("wrong command"),
+        }
+    }
+
+    #[test]
+    fn expose_takes_all() {
+        let cli = parse(&["pai-sho", "expose", "5555", "--all"]).unwrap();
+        match cli.command {
+            Command::Expose { to, all, .. } => {
+                assert!(all);
+                assert!(to.is_empty());
+            }
+            _ => panic!("wrong command"),
+        }
+    }
+
+    #[test]
+    fn expose_refuses_both_at_once() {
+        assert!(parse(&["pai-sho", "expose", "5555", "--to", "a", "--all"]).is_err());
+    }
+
+    #[test]
+    fn unexpose_needs_no_grantee() {
+        let cli = parse(&["pai-sho", "unexpose", "5555"]).unwrap();
+        match cli.command {
+            Command::Unexpose { port, to } => {
+                assert_eq!(port, 5555);
+                assert!(to.is_none());
+            }
+            _ => panic!("wrong command"),
+        }
+    }
 }

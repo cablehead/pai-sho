@@ -781,11 +781,6 @@ impl PeerManager {
         }
     }
 
-    /// Keys of all currently known peers
-    pub fn peer_ids(&self) -> Vec<EndpointId> {
-        self.peers.iter().map(|e| *e.key()).collect()
-    }
-
     /// List all peers
     pub async fn list(&self) -> Vec<PeerInfo> {
         let mut result = Vec::new();
