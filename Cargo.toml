@@ -1,6 +1,6 @@
 [package]
 name = "pai-sho"
-version = "0.5.0"
+version = "0.5.1-dev"
 edition = "2021"
 description = "Forward ports between your own machines, peer to peer. Neither side needs an account, a public IP, or an open inbound port. Only what you grant is reachable."
 license = "MIT"

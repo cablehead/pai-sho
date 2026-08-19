@@ -2305,7 +2305,7 @@ checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
 name = "pai-sho"
-version = "0.5.0"
+version = "0.5.1-dev"
 dependencies = [
  "anyhow",
  "clap",
