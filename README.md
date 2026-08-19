@@ -173,20 +173,22 @@ pai-sho [--socket <path>] <command>
 ### Commands
 
 ```
-daemon [options]           Start the daemon
-key                        Print this daemon's key (hand this to a peer)
+daemon [options]            Start the daemon
+key                         Print this daemon's key (hand this to a peer)
 invite [<key>] [--as <n>] [--expose <port>...]
-                           Extend an invitation. With a key, to that key alone
-                           (host-attested, no secret). Without one, print a
-                           one-time invitation valid 5 minutes.
+                            Extend an invitation. With a key, to that key alone
+                            (host-attested, no secret). Without one, print a
+                            one-time invitation valid 5 minutes.
 accept <invite|key> [--as <n>]
-                           Take up an invitation, or reach a peer by key
-forget <peer>              Forget a peer: close it, unbind, revoke its grants
-expose <port> (--to <key> | --all)  Grant a local port to named peers
-unexpose <port> [--to <k>] Revoke grants for a port (or one peer's grant)
-project <peer> [--ip <a>] [--as <name>]  Bind a peer's ports at a local address
-unproject <peer>           Take a peer's surface down (unbind its ports)
-list                       Peers, grants, and where their ports are bound (JSON)
+                            Take up an invitation, or reach a peer by key
+forget <peer>               Forget a peer: close it, unbind, revoke its grants
+expose <port> (--to <key> | --all)
+                            Grant a local port to named peers
+unexpose <port> [--to <k>]  Revoke grants for a port (or one peer's grant)
+project <peer> [--ip <a>] [--as <name>]
+                            Bind a peer's ports at a local address
+unproject <peer>            Take a peer's surface down (unbind its ports)
+list                        Peers, grants, and where ports are bound (JSON)
 ```
 
 `--socket` is global, not specific to `daemon`.
