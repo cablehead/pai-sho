@@ -22,25 +22,15 @@
   </a>
 </p>
 
-Traffic runs over [iroh](https://github.com/n0-computer/iroh), encrypted end to
-end. Peers dial each other by public key, and iroh punches through the NAT. When
-it can't, a relay carries the packets it cannot read.
-
 Access is default deny. You grant a port to a peer's key, and that peer alone can
 reach it. Machines link by invitation: one side extends it, the other takes it
-up. No account is involved, and nothing in the middle can hand out reach.
-
-Every peer gets its own address on a private network the daemon runs, and a name
-to match, so its ports answer at `peer.pai-sho:<port>`. Two peers can serve the
-same port without clashing. None of it reaches the rest of your DNS.
+up.
 
 ## Example
 
-I boot a dedicated VM per task, a
-[vibenv](https://github.com/cablehead/vibenv.dag), with no inbound ports. On my
-laptop the daemon is already running on its own network interface (the
-[Homebrew install](#install) sets that up; [Setting up the network](#setting-up-the-network)
-covers doing it by hand). I invite the VM I'm about to boot:
+Say you boot a dedicated VM per task, a
+[vibenv](https://github.com/cablehead/vibenv.dag), with no inbound ports. Invite
+it from your laptop before it boots:
 
 ```sh
 pai-sho invite --as vibenv-ndyg
@@ -48,22 +38,24 @@ pai-sho invite --as vibenv-ndyg
 # one-time, valid 5 minutes
 ```
 
-That one value says who to dial and proves the VM may.
+That one value says who to dial and proves the VM may. (The laptop's daemon is
+already running on its own network interface. [Install](#install) sets that up;
+[Setting up the network](#setting-up-the-network) covers doing it by hand.)
 
 The VM runs an [http-nu](https://github.com/cablehead/http-nu) app on `:3001` and
 [stellar](https://github.com/cablehead/stellar) on `:7331` for live CSS editing.
-Its daemon takes up the invitation and exposes both ports to my laptop:
+Its daemon takes up the invitation and exposes both ports to the laptop:
 
 ```sh
 pai-sho daemon --accept 5hc4bjqfp6...7fd25613dd... -e 3001,7331
 ```
 
-The VM comes up as `vibenv-ndyg`, and only my laptop can reach it. Anyone else
+The VM comes up as `vibenv-ndyg`, and only your laptop can reach it. Anyone else
 who dials the VM is refused.
 
-On acceptance the VM is projected onto my network on its own: it gets an address
-like `10.99.1.2`, and its ports bind there under the name `vibenv-ndyg`. Both answer by
-name, with no manual step:
+It is projected on acceptance, with no manual step: it gets an address like
+`10.99.1.2` on the laptop's private network, and its ports bind there under the
+name `vibenv-ndyg`. Both answer by name:
 
 ```sh
 curl http://vibenv-ndyg.pai-sho:3001
@@ -77,10 +69,10 @@ http-nu :3002 -c '{|req| "hello from a new experiment"}'
 pai-sho expose 3002 --all
 ```
 
-`--all` means every peer this VM knows right now, which is my laptop and nothing
-else. It is not a standing rule: a peer admitted later gets nothing.
+`--all` means every peer this VM knows right now, which is your laptop and
+nothing else. It is not a standing rule: a peer admitted later gets nothing.
 
-`vibenv-ndyg` is already on my network, so `3002` binds under it too, reachable at
+`vibenv-ndyg` already has an address, so `3002` binds under it too, reachable at
 `http://vibenv-ndyg.pai-sho:3002` right away. Done with it? `pai-sho unexpose 3002`.
 
 Close the laptop and reopen it: the connection restores on its own, the surface
@@ -209,10 +201,10 @@ list                        Peers, grants, and where ports are bound (JSON)
 keypair at `--key`. Because it does not change, a launcher can bake one
 operator key into every workload it boots.
 
-**Grants.** Access is default deny. A port becomes reachable only through a grant that names the peers allowed to
-reach it, and is served to them alone. iroh proves the connecting
-peer's key cryptographically, so a grant names a proven identity, not a shareable
-address. You cannot hand out reach by leaking a string
+**Grants.** Access is default deny. A port becomes reachable only through a grant
+that names the peers allowed to reach it, and is served to them alone. iroh
+proves the connecting peer's key cryptographically, so a grant names a proven
+identity, not a shareable address. You cannot hand out reach by leaking a string
 ([ADR 0001](docs/adr/0001-directed-grants.md)).
 
 **Invitations.** A connection from an unknown key is refused unless it carries a
@@ -222,6 +214,11 @@ restarts, so a reboot does not orphan a workload
 who to dial, and the proof you may. When you already know a peer's key,
 `invite <key>` authorizes it with no secret created at all
 ([ADR 0003](docs/adr/0003-host-attested-enrollment.md)).
+
+**Connecting.** Peers dial by public key over
+[iroh](https://github.com/n0-computer/iroh). It punches through NAT, so neither
+side needs an open inbound port or a public IP. When it can't punch through, an
+n0 relay forwards the traffic without being able to read it.
 
 **Forwarding.** Each peer hears only the ports granted to it, and traffic runs
 over the encrypted QUIC connection. It goes both ways: something on your own
@@ -237,10 +234,11 @@ needs root.
 
 **Surfaces.** A peer's ports are addressed together at one address, under the
 name you gave it, or a short form of its key if nothing named it. A peer is
-projected automatically the first time it announces a granted port. Because each peer owns its address, two peers can serve
-the same port without colliding. `project` overrides the automatic choice (pin an
-address with `--ip`, rename with `--as`), `unproject` takes a surface down, and
-projections survive a restart ([ADR 0004](docs/adr/0004-peer-surfaces.md)).
+projected automatically the first time it announces a granted port. Because each
+peer owns its address, two peers can serve the same port without colliding.
+`project` overrides the automatic choice (pin an address with `--ip`, rename with
+`--as`), `unproject` takes a surface down, and projections survive a restart
+([ADR 0004](docs/adr/0004-peer-surfaces.md)).
 
 **Resolver.** The daemon answers `<name>.pai-sho` from the live surface table, so
 `vibenv-ndyg.pai-sho` reaches that peer's ports and stops resolving when the peer goes
