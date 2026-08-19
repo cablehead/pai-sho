@@ -1,5 +1,11 @@
 # Host-Attested Enrollment
 
+> **Names here are historical.** Written when the commands were
+> `pin <key> --slug <name>` and `daemon --slug`. What shipped is
+> `invite <key> --as <name>`, and the workload side is `daemon --accept <key>`
+> ([0006](0006-invitations.md)). The decision is unchanged: the host vouches for
+> a key the workload generated, and nothing secret travels into the guest.
+
 ## Context
 
 [ADR 0002](0002-token-enrollment.md) has the operator trust a workload by
@@ -72,11 +78,3 @@ unchanged.
   can read guest RAM, so no channel hides a secret from a bad host regardless.
   This design does not try to; it removes the leakable bearer secret and closes
   the network enrollment race.
-
-## Note on names
-
-This ADR was written when the commands were `pin <key> --slug <name>` and
-`daemon --slug`. What shipped is `invite <key> --as <name>`, and the workload
-side is `daemon --accept <key>`. The decision is unchanged: the host vouches for
-a key the workload generated, and nothing secret travels into the guest. See
-docs/scenarios.md for the current flow.
