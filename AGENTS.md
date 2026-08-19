@@ -47,6 +47,8 @@ Put decisions in `core`, keep IO in the shell. A security decision made inline i
 default-allow once already. See docs/adr/0007.
 
 - `src/core/session.rs` -- admission, grants, tunnel authorization (pure, unit tested)
+- `src/core/grants.rs` -- the `(port) -> grantees` table (ADR 0001)
+- `src/core/invite.rs` -- parsing `<key>.<code>`
 - `src/peer.rs` -- connections, dialing, retry, binding
 - `src/daemon.rs` -- control socket, request handling, state files
 - `src/live_tests.rs` -- two real daemons over loopback, relays disabled

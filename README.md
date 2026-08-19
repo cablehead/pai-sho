@@ -206,11 +206,11 @@ identity, not a shareable address. You cannot hand out reach by leaking a string
 
 **Invitations.** A connection from an unknown key is refused unless it carries a
 code from `invite`. The code is spent on use, and the peer it admitted survives
-restarts, so a reboot does not orphan a workload
-([ADR 0002](docs/adr/0002-token-enrollment.md)). An invitation is `<key>.<code>`:
+restarts, so a reboot does not orphan a workload. An invitation is `<key>.<code>`:
 who to dial, and the proof you may. When you already know a peer's key,
 `invite <key>` authorizes it with no secret created at all
-([ADR 0003](docs/adr/0003-host-attested-enrollment.md)).
+([ADR 0006](docs/adr/0006-invitations.md),
+[ADR 0003](docs/adr/0003-host-attested-enrollment.md)).
 
 **Connecting.** Peers dial by public key over
 [iroh](https://github.com/n0-computer/iroh). It punches through NAT, so neither
@@ -247,6 +247,14 @@ dnsmasq `server=/pai-sho/10.99.0.53` forward on Linux
 **Reconnection.** If the connection drops, both sides retry with exponential
 backoff. Projected surfaces stay put and rebind when the link returns.
 
+**Structure.** `src/core/` decides and does no IO: admission, grants, and tunnel
+authorization, unit tested without a network. The shell in `peer.rs` feeds it
+events and carries out the actions it returns
+([ADR 0007](docs/adr/0007-pure-core.md)).
+
+The rules that hold whatever you type are in
+[docs/scenarios.md](docs/scenarios.md#invariants).
+
 ## See also
 
 [ngrok](https://ngrok.com) and [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
@@ -271,9 +279,11 @@ pai-sho's connection handling comes from.
 [docs/scenarios.md](docs/scenarios.md) works two flows end to end: a shared build
 box reached from a laptop, and a laptop booting a vibenv. Each says what has to
 be true, what travels between the machines, and why the commands are shaped the
-way they are.
+way they are. Its [invariants](docs/scenarios.md#invariants) are the shortest
+statement of the model.
 
-The [ADRs](docs/adr) record the decisions: directed grants, invitations,
-host-attested enrollment, peer surfaces, and the owned resolver.
+The [ADRs](docs/adr) record the decisions and how they moved: directed grants,
+two passes at enrollment before invitations landed, peer surfaces, the owned
+resolver, and the pure core.
 
 Questions or ideas: come by the [Discord](https://discord.com/invite/YNbScHBHrh).

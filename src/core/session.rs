@@ -14,8 +14,8 @@
 //!
 //! See docs/scenarios.md for the invariants these are meant to hold.
 
+use crate::core::grants::Grants;
 use crate::enroll::Tokens;
-use crate::grants::Grants;
 use crate::protocol::PeerMessage;
 use iroh::EndpointId;
 use std::collections::BTreeMap;

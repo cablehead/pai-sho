@@ -75,3 +75,14 @@ address -- you can't hand someone access by leaking a string.
 
 Identity persistence and enrollment (how a workload gets `kL` and how the laptop
 learns `kA`) are separate concerns -- see forthcoming ADRs.
+
+## Addendum: the CLI violated this for two releases
+
+`expose <port>` with no grantee granted the port to every peer the daemon knew.
+Default allow, in the command that implements default deny. The decision above
+never changed; the CLI just never enforced it, and nothing caught that because
+the grant check was unreachable from the tests
+([0007](0007-pure-core.md) is the structural fix).
+
+`expose` now requires `--to <key>` or `--all`, and `--all` is every peer known at
+that moment, not a standing rule ([0006](0006-invitations.md)).

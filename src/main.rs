@@ -6,7 +6,6 @@ mod client;
 mod core;
 mod daemon;
 mod enroll;
-mod grants;
 #[cfg(test)]
 mod live_tests;
 mod netstack;

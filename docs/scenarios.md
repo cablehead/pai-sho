@@ -4,31 +4,12 @@ Worked end-to-end flows, written from the operator's side. Each one states what
 has to be true, what travels between machines, and where the flow is rougher
 than it needs to be.
 
-## The CLI
+The command reference lives in the [README](../README.md#commands).
 
-```
-pai-sho [--socket <path>] <command>
+## Invariants
 
-daemon [--accept <invite|key>]... [-e <port>,...]
-       [--host <ip>] [--key <path>] [--name <name>]
-       [--tun <dev>] [--resolver <addr>]
-       [--socket-owner <user>] [--socket-mode <octal>]
-```
-
-| Command | Description |
-|---------|-------------|
-| `key` | Print this daemon's key |
-| `invite [<key>] [--as <name>] [--expose <port>...]` | Extend an invitation. With a key, to that key alone. Without one, prints a one-time invitation valid 5 minutes |
-| `accept <invite\|key> [--as <name>]` | Take up an invitation |
-| `forget <peer>` | Evict: close, unbind, revoke grants, drop the record |
-| `expose <port> (--to <key>... \| --all)` | Grant a local port to named peers |
-| `unexpose <port> [--to <key>]` | Revoke; bare revokes every grant for the port |
-| `project <peer> [--ip <addr>] [--as <name>]` | Override the automatic projection |
-| `unproject <peer>` | Unbind ports, drop address and name |
-| `list` | Peers, their grants, where their ports are bound, and how each was admitted |
-
-Five things are worth stating once, because every scenario below depends on
-them.
+Five things every scenario below depends on. This is the one place they are
+stated.
 
 **A link is mutual.** `invite` and `accept` are the two halves of one handshake:
 hi, be friends, and yeah, be friends. Neither works alone. A dial from a peer
