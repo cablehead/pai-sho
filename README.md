@@ -6,7 +6,7 @@
 
 <p align="center">
   Forward ports between your own machines, peer to peer.<br>
-  Neither side needs an open inbound port, a public IP, or an account.<br>
+  Neither side needs an account, a public IP, or an open inbound port.<br>
   Only what you grant is reachable.
 </p>
 

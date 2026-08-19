@@ -20,7 +20,7 @@ mod tunnel;
     name = "pai-sho",
     about = "Forward ports between your own machines, peer to peer",
     long_about = "Forward ports between your own machines, peer to peer. Neither \
-side needs an open inbound port, a public IP, or an account.\n\n\
+side needs an account, a public IP, or an open inbound port.\n\n\
 Machines link by invitation: one side extends it, the other takes it up. Access \
 is default deny. You grant a port to a specific peer's key, and that peer alone \
 can reach it.\n\n\
