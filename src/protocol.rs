@@ -112,7 +112,7 @@ pub enum PeerMessage {
     ExposedPorts(Vec<u16>),
     /// Request to connect to a specific port
     Connect { port: u16 },
-    /// Present a one-time enrollment token (sent on connect by `--enroll`)
+    /// Present an invitation's one-time code (sent on connect by `accept`)
     Enroll { token: String },
     /// Error response
     Error(String),

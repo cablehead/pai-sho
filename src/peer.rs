@@ -36,12 +36,12 @@ const BIND_RETRY_DELAY: Duration = Duration::from_millis(200);
 /// Info about a connected peer
 struct Peer {
     endpoint_id: EndpointId,
-    /// Label assigned at enrollment (None for peers added by ticket)
+    /// What we call this peer, from `--as` (None until something names it)
     label: Option<String>,
-    /// Whether we dial this peer to reconnect. True for peers added by
-    /// ticket; enrolled/pinned peers dial us, so we just wait.
+    /// Whether we dial this peer to reconnect. True for peers we accepted;
+    /// peers that accepted our invitation dial us, so we just wait.
     dial: bool,
-    /// Token to present on connect (workload side, from --enroll)
+    /// An invitation's one-time code, presented on connect by the accepter
     enroll_token: Option<String>,
     connection: RwLock<Option<Connection>>,
     /// Ports this peer exposes
@@ -842,8 +842,8 @@ impl PeerManager {
         result
     }
 
-    /// Resolve a peer reference (an endpoint key or an enrollment label) to a
-    /// key. A key is tried first; a label match is the fallback.
+    /// Resolve a peer reference (a key, or the name we gave it) to a key.
+    /// A key is tried first; a name match is the fallback.
     fn resolve_peer(&self, peer_ref: &str) -> Option<EndpointId> {
         if let Ok(id) = peer_ref.parse::<EndpointId>() {
             if self.peers.contains_key(&id) {
@@ -879,8 +879,7 @@ impl PeerManager {
     }
 
     /// Resolve a surface name to its address, for the owned resolver. Matches
-    /// the name a surface was projected under (an enrollment label, or an
-    /// explicit `--as`).
+    /// the name a surface was projected under, from `--as` or a truncated key.
     pub async fn resolve_name(&self, label: &str) -> Option<IpAddr> {
         // Our own name resolves to where our services are: the --host forward
         // address (default 127.0.0.1). The TUN backend answers self-name the

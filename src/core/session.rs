@@ -29,9 +29,9 @@ pub struct ConnId(pub u64);
 /// weight when auditing: a code was held, a key was vouched for.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Admission {
-    /// The operator added it by key (`add-peer`).
+    /// We named its key directly, with `accept <key>` or `invite <key>`.
     Added,
-    /// It presented a valid one-time enrollment code.
+    /// It presented a valid one-time invitation code.
     Code,
     /// Its key was pinned ahead of time, no secret involved.
     Key,
@@ -143,7 +143,7 @@ impl Session {
 
     // ---------------------------------------------------------------- admission
 
-    /// Record a peer the operator named directly, by `add-peer` or by pin.
+    /// Record a peer we named directly, by key or by a restored pin.
     /// Idempotent: re-adding a known peer leaves it as it was.
     pub fn admit_known(
         &mut self,

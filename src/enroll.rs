@@ -1,8 +1,8 @@
-//! Enrollment - one-time tokens minted by the operator, and pinned peers.
+//! Enrollment - one-time codes minted by the inviter, and pinned peers.
 //!
-//! `grant-token --label <name>` mints a token; a workload presents it on
-//! first connect (`--enroll TOKEN`). A valid claim pins the workload's key
-//! under that label and consumes the token. Pins persist across restarts.
+//! `invite` mints a code; the accepter presents it on first connect. A valid
+//! claim pins the accepter's key under the name the inviter chose, if any, and
+//! consumes the code. Pins persist across restarts. See ADR 0006.
 
 use anyhow::{Context, Result};
 use rand::Rng;
