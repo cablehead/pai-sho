@@ -188,6 +188,9 @@ pai-sho [--socket <path>] <command>
 | `--key` | `~/.local/state/pai-sho/key` | Secret key path (created if missing) |
 | `--tun` | | Put surfaces on a private TUN network (`utun` on macOS, a pre-created device like `ps0` on Linux); the resolver answers in-stack on `10.99.0.53:53` |
 | `--resolver` | | Loopback mode, an alternative to `--tun`: serve the `*.pai-sho` resolver on this UDP address (e.g. `127.0.0.1:5353`) |
+| `--name` | | This node's own name. The resolver answers `<name>.pai-sho` with `--host`, so a service reached locally and from a peer has one origin, which is what CORS needs |
+| `--socket-owner` | | Username to own the control socket, chowned right after bind. Lets the CLI skip sudo when the daemon runs as root |
+| `--socket-mode` | | Octal mode for the control socket, e.g. `660` |
 
 ## How it works
 

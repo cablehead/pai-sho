@@ -10,29 +10,22 @@ than it needs to be.
 pai-sho [--socket <path>] <command>
 
 daemon [--accept <invite|key>]... [-e <port>,...]
-       [--host <ip>] [--key <path>] [--name <n>]
+       [--host <ip>] [--key <path>] [--name <name>]
        [--tun <dev>] [--resolver <addr>]
        [--socket-owner <user>] [--socket-mode <octal>]
-
-key                                       Print this daemon's key
-
-invite [<key>] [--as <name>] [--expose <port>...]
-                                          Extend an invitation. With a key, to
-                                          that key alone. Without one, prints a
-                                          one-time invitation (valid 5 minutes).
-accept <invite|key> [--as <name>]         Take up an invitation.
-forget <peer>                             Evict: close, unbind, revoke grants,
-                                          drop the record.
-
-expose <port> (--to <key>... | --all)     Grant a local port to named peers.
-unexpose <port> [--to <key>]              Revoke; bare revokes every grant.
-
-project <peer> [--ip <addr>] [--as <name>]  Override the automatic projection.
-unproject <peer>                          Unbind ports, drop address and name.
-
-list                                      Peers, their grants, where their ports
-                                          are bound, and how each was admitted.
 ```
+
+| Command | Description |
+|---------|-------------|
+| `key` | Print this daemon's key |
+| `invite [<key>] [--as <name>] [--expose <port>...]` | Extend an invitation. With a key, to that key alone. Without one, prints a one-time invitation valid 5 minutes |
+| `accept <invite\|key> [--as <name>]` | Take up an invitation |
+| `forget <peer>` | Evict: close, unbind, revoke grants, drop the record |
+| `expose <port> (--to <key>... \| --all)` | Grant a local port to named peers |
+| `unexpose <port> [--to <key>]` | Revoke; bare revokes every grant for the port |
+| `project <peer> [--ip <addr>] [--as <name>]` | Override the automatic projection |
+| `unproject <peer>` | Unbind ports, drop address and name |
+| `list` | Peers, their grants, where their ports are bound, and how each was admitted |
 
 Five things are worth stating once, because every scenario below depends on
 them.
@@ -81,7 +74,11 @@ Three separate facts, and missing any one of them fails in its own way:
 3. The build box grants `8080` to my laptop. Missing, we connect cleanly and I
    am announced no ports, so the surface comes up empty.
 
-### The flow before this
+### The flow before this (history)
+
+None of the commands below exist any more. This is here because it is why the
+current shape is the shape, recorded in [ADR 0006](adr/0006-invitations.md).
+Skip to "The flow now" if you only want what to type.
 
 Two values had to travel, and the flow did not complete:
 
@@ -184,8 +181,13 @@ exchanged:
 ```sh
 # vm
 http-nu :3002 -c '{|req| "hello from a new experiment"}'
-pai-sho expose 3002 --to <laptop-key>
+pai-sho expose 3002 --all
 ```
+
+`--all` is every peer the VM knows right now, which here is my laptop and nothing
+else. Naming the key with `--to <laptop-key>` is the same grant, spelled out.
+Prefer `--to` where more than one peer is admitted, since `--all` is a snapshot
+and reads like a rule.
 
 ### Without a secret in the guest
 

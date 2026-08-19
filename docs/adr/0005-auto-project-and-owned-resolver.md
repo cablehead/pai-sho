@@ -24,15 +24,15 @@ Two facts change the tradeoff:
 
 **Auto-project by default.** When a peer announces its first granted port and has
 no surface, it is projected automatically: an address is allocated, the surface is
-named after the peer's enrollment label, and the ports bind there. Reach is
-automatic again. `project` / `unproject` remain as the override: pin a specific
-address, rename, or toggle a peer off.
+named after the peer, and the ports bind there. Reach is automatic again.
+`project` / `unproject` remain as the override: pin a specific address, rename,
+or toggle a peer off.
 
-**Names come from an owned resolver, not `/etc/hosts`.** The daemon serves a small
-authoritative resolver from the live surface table: `<label>.pai-sho` resolves to that
-surface's address and stops resolving when it goes away. This replaces the
-`/etc/hosts` writing from 0004, which needed root on every change and could not
-run as the unprivileged `app` user inside a VM.
+**Names come from an owned resolver, not `/etc/hosts`.** The daemon serves a
+small authoritative resolver from the live surface table: `<name>.pai-sho`
+resolves to that surface's address and stops resolving when it goes away. This
+replaces the `/etc/hosts` writing from 0004, which needed root on every change
+and could not run as the unprivileged `app` user inside a VM.
 
 The resolver is authoritative for `.pai-sho` and **nothing else**. It never recurses or
 forwards; a query outside `.pai-sho` gets an empty answer. dnsmasq stays the front door
@@ -103,6 +103,8 @@ caddy, and `.pai-sho` names intentionally cannot get public-CA certs.
   vibenv-goo.pai-sho:9000` reached a peer over the utun by name. If a future
   macOS version does break it, the fallback is a local forwarder (dnsmasq-style)
   rather than `/etc/resolver`.
-- **Name integrity rests on the enrollment label.** `<label>.pai-sho` is
-  trustworthy only because the operator mints the label into the token, not the
-  peer. If a peer could set its own label it could claim another surface's name.
+- **Name integrity rests on names being local.** `<name>.pai-sho` is trustworthy
+  only because this daemon chose the name, with `--as` or from a truncated key.
+  Nothing in the peer protocol carries a name, so a peer cannot claim another
+  surface's. Any future field letting a peer suggest its own name would break
+  this ([0006](0006-invitations.md)).

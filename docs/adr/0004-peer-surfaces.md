@@ -1,5 +1,11 @@
 # Peer Surfaces
 
+> **Partly superseded.** [0005](0005-auto-project-and-owned-resolver.md) makes
+> projection automatic and replaces the `/etc/hosts` handle below with an owned
+> resolver. The `surfaces` command is gone, folded into `list`, and "enrollment
+> label" is now the name from `--as`, or a truncated key. What stands: a surface
+> is a peer's ports at their own address, and `project` / `unproject` control it.
+
 ## Context
 
 A peer exposes ports to us; we reach them on `localhost`. Today every peer's
@@ -14,8 +20,9 @@ follow:
   peer announces it. You address it by a bare number and cannot tell which peer's
   `:7676` you are talking to.
 
-`CLAUDE.md` already describes the model we want ("Peer: assigned local `127.0.0.x`
-IP", "Auto-bind: bind `<peer-ip>:<port>`"), but the code never implemented it.
+`CLAUDE.md` already described the model we want at the time ("Peer: assigned
+local `127.0.0.x` IP", "Auto-bind: bind `<peer-ip>:<port>`"), but the code never
+implemented it.
 
 ## Decision
 

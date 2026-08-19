@@ -43,8 +43,9 @@ pub enum Request {
     List,
     /// Print this daemon's key
     Key,
-    /// Project a peer's surface to a local address. `peer` is a key or label;
-    /// `ip` is chosen if given, else allocated; `name` adds a /etc/hosts handle.
+    /// Project a peer's surface to a local address. `peer` is a key or the name
+    /// it was given; `ip` is chosen if given, else allocated; `name` renames the
+    /// surface, which is what the resolver answers `<name>.pai-sho` with.
     Project {
         peer: String,
         ip: Option<String>,

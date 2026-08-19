@@ -1,5 +1,11 @@
 # Token Enrollment and Identity Persistence
 
+> **Names here are historical.** Written when the commands were `ticket`,
+> `grant-token --label <name>`, and `daemon --enroll <token>`. All three are
+> gone. What shipped is `invite` / `accept`, and an invitation is one value
+> carrying both halves: see [0006](0006-invitations.md). The decision below
+> stands, and [0003](0003-host-attested-enrollment.md) supersedes its token half.
+
 ## Context
 
 [ADR 0001](0001-directed-grants.md) makes access default deny: a grant names
