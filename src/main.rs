@@ -22,9 +22,9 @@ mod tunnel;
     about = "Forward ports between your own machines, peer to peer",
     long_about = "Forward ports between your own machines, peer to peer. Neither \
 side needs an open inbound port, a public IP, or an account.\n\n\
-Access is default deny. You grant a port to a specific peer's key, and that peer \
-alone can reach it. Machines link by invitation: one side extends it, the other \
-takes it up.\n\n\
+Machines link by invitation: one side extends it, the other takes it up. Access \
+is default deny. You grant a port to a specific peer's key, and that peer alone \
+can reach it.\n\n\
 Each peer's ports answer under a name you picked, like vibenv-ndyg.pai-sho.",
     version
 )]
