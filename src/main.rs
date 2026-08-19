@@ -19,13 +19,13 @@ mod tunnel;
 #[derive(Parser)]
 #[clap(
     name = "pai-sho",
-    about = "Reach a machine's ports from your laptop, each under its own name",
-    long_about = "Spin up a box in the middle of nowhere, with no way in. Drop one \
-binary on it. No open ports, no public IP: it dials home and punches through. \
-Reach your boxes from your laptop, each under its own name like \
-vibenv-ndyg.pai-sho.\n\n\
-Access is default deny and per peer. You grant a specific port to a specific \
-peer's key, and that peer alone can reach it.",
+    about = "Forward ports between your own machines, peer to peer",
+    long_about = "Forward ports between your own machines, peer to peer. Neither \
+side needs an open inbound port, a public IP, or an account.\n\n\
+Access is default deny. You grant a port to a specific peer's key, and that peer \
+alone can reach it. Machines link by invitation: one side extends it, the other \
+takes it up.\n\n\
+Each peer's ports answer under a name you picked, like vibenv-ndyg.pai-sho.",
     version
 )]
 struct Cli {

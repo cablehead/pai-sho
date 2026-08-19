@@ -2,7 +2,7 @@
 name = "pai-sho"
 version = "0.4.2-dev"
 edition = "2021"
-description = "Drop one binary on a box with no way in. It dials home and punches through, so its ports show up on your laptop, each under its own name. Encrypted, peer-to-peer, default deny."
+description = "Forward ports between your own machines, peer to peer. Neither side needs an open inbound port, a public IP, or an account. Only what you grant is reachable."
 license = "MIT"
 repository = "https://github.com/cablehead/pai-sho"
 keywords = ["iroh", "quic", "p2p", "port-forwarding", "nat-traversal"]

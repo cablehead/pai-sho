@@ -5,9 +5,9 @@
 <h1 align="center">pai-sho</h1>
 
 <p align="center">
-  Spin up a box in the middle of nowhere, with no way in. Drop one binary on it.<br>
-  No open ports, no public IP: it dials home and punches through.<br>
-  Reach your boxes from your laptop, each under its own name like <code>vibenv-ndyg.pai-sho</code>.
+  Forward ports between your own machines, peer to peer.<br>
+  Neither side needs an open inbound port, a public IP, or an account.<br>
+  Only what you grant is reachable.
 </p>
 
 <p align="center">
@@ -22,14 +22,13 @@
   </a>
 </p>
 
-pai-sho forwards specific TCP ports between your machines, encrypted and
-peer-to-peer, over [iroh](https://github.com/n0-computer/iroh). Neither machine
-needs an open inbound port or a public IP. iroh punches through the NAT, and
-falls back to a relay when it can't.
+Traffic runs over [iroh](https://github.com/n0-computer/iroh), encrypted end to
+end. Peers dial each other by public key, and iroh punches through the NAT. When
+it can't, a relay carries the packets it cannot read.
 
-Access is default deny. You grant one port to one peer's key, and that peer
-alone can reach it. Machines link by invitation: one side extends it, the other
-takes it up.
+Access is default deny. You grant a port to a peer's key, and that peer alone can
+reach it. Machines link by invitation: one side extends it, the other takes it
+up. No account is involved, and nothing in the middle can hand out reach.
 
 Every peer gets its own address on a private network the daemon runs, and a name
 to match, so its ports answer at `peer.pai-sho:<port>`. Two peers can serve the
