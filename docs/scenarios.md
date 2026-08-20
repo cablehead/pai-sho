@@ -83,7 +83,7 @@ What was wrong with it:
 - **A token was unusable by a running daemon.** Restarting a daemon to add one
   peer is not reasonable when it is already serving others.
 - **Two values travelled for one handshake.** The key said who to dial, the
-  token proved I may. They were always used together.
+  token proved I may, and was useless without the key.
 - **The grant was a separate step.** Steps 1 and 3 both happen on the build box
   and express one intention. Split apart, the common failure was a peer that
   connected fine and saw nothing, which reads like a bug.
