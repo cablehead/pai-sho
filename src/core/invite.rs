@@ -1,7 +1,8 @@
 //! Invitations: what one daemon hands another so it can say yes.
 //!
 //! An invitation is self-contained. It carries the issuer's key, so the
-//! accepter knows who to dial, and a one-time code, which proves it may. Both
+//! accepter knows which machine to dial, and a one-time code, which admits it.
+//! Both
 //! halves always travel together, so they are one value.
 //!
 //! `accept` also takes a bare key, for the case where nothing secret can be

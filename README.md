@@ -5,7 +5,7 @@
 <h1 align="center">pai-sho</h1>
 
 <p align="center">
-  Forward ports between your own machines, peer to peer.<br>
+  Forward ports between your own machines, peer to peer over <a href="https://github.com/n0-computer/iroh">iroh</a>.<br>
   Neither side needs an account, a public IP, or an open inbound port.<br>
   Only what you grant is reachable.
 </p>
@@ -22,61 +22,56 @@
   </a>
 </p>
 
-Machines link by invitation: one side extends it, the other takes it up. Access
-is default deny. You grant a port to a peer's key, and that peer alone can reach
-it.
+## Example scenarios
 
-## Example
+### A shared build box
 
-Say you boot a dedicated VM per task, a
-[vibenv](https://github.com/cablehead/vibenv.dag), with no inbound ports. Invite
-it from your laptop before it boots:
+A team runs a long-lived build box. Its dashboard is on `localhost:8080`. The
+box invites your laptop and grants the port in the same command:
+
+```sh
+# build box
+pai-sho invite --expose 8080
+```
+
+```sh
+# laptop
+pai-sho accept 5hc4bjqfp6...7fd25613dd... --as buildbox
+curl http://buildbox.pai-sho:8080
+```
+
+### A laptop boots a VM
+
+The roles reverse here: the consumer invites, and picks the name. You boot a
+dedicated VM per task, a [vibenv](https://github.com/cablehead/vibenv.dag), with
+no inbound ports. Invite it from your laptop before it boots:
 
 ```sh
 pai-sho invite --as vibenv-ndyg
-# 5hc4bjqfp6booceusm3jrfebbegyfi6aiqwbgx4xxqmpvg5usoyq.7fd25613dd5e17cb...
-# one-time, valid 5 minutes
+# 5hc4bjqfp6...7fd25613dd...   one-time, valid 5 minutes
 ```
 
-That one value says who to dial and proves the VM may. (The laptop's daemon is
-already running on its own network interface. [Install](#install) sets that up;
-[Setting up the network](#setting-up-the-network) covers doing it by hand.)
-
-The VM runs an [http-nu](https://github.com/cablehead/http-nu) app on `:3001` and
-[stellar](https://github.com/cablehead/stellar) on `:7331` for live CSS editing.
-Its daemon takes up the invitation and exposes both ports to the laptop:
+The VM runs an [http-nu](https://github.com/cablehead/http-nu) app on
+`localhost:3001` and [stellar](https://data-star.dev/pro#stellar-css) on
+`localhost:7331`. Its daemon takes the invitation up on startup and exposes
+both:
 
 ```sh
 pai-sho daemon --accept 5hc4bjqfp6...7fd25613dd... -e 3001,7331
 ```
 
-The VM comes up as `vibenv-ndyg`, and only your laptop can reach it. Anyone else
-who dials the VM is refused.
-
-It is projected on acceptance, with no manual step: it gets an address like
-`10.99.1.2` on the laptop's private network, and its ports bind there under the
-name `vibenv-ndyg`. Both answer by name:
+It is projected on acceptance, with no manual step: an address on your laptop's
+private network, ports bound there under the name you chose. Only your laptop can
+reach it, and anyone else who dials is refused.
 
 ```sh
 curl http://vibenv-ndyg.pai-sho:3001
 open http://vibenv-ndyg.pai-sho:7331
 ```
 
-Spin up something new on the VM and expose it live:
+Close the laptop and reopen it. The connection restores and the ports rebind.
 
-```sh
-http-nu :3002 -c '{|req| "hello from a new experiment"}'
-pai-sho expose 3002 --all
-```
-
-`--all` means every peer this VM knows right now, which is your laptop and
-nothing else. It is not a standing rule: a peer admitted later gets nothing.
-
-`vibenv-ndyg` already has an address, so `3002` binds under it too, reachable at
-`http://vibenv-ndyg.pai-sho:3002` right away. Done with it? `pai-sho unexpose 3002`.
-
-Close the laptop and reopen it: the connection restores on its own, the surface
-rebinds, and no new invitation is needed.
+[docs/scenarios.md](docs/scenarios.md) works both through in full.
 
 ## Install
 
@@ -206,16 +201,17 @@ identity, not a shareable address. You cannot hand out reach by leaking a string
 
 **Invitations.** A connection from an unknown key is refused unless it carries a
 code from `invite`. The code is spent on use, and the peer it admitted survives
-restarts, so a reboot does not orphan a workload. An invitation is `<key>.<code>`:
-who to dial, and the proof you may. When you already know a peer's key,
-`invite <key>` authorizes it with no secret created at all
+restarts, so a reboot does not orphan a workload. An invitation is
+`<key>.<code>`: the key says who to dial, the code admits you. When you already
+know a peer's key, `invite <key>` authorizes it with no secret created at all
 ([ADR 0006](docs/adr/0006-invitations.md),
 [ADR 0003](docs/adr/0003-host-attested-enrollment.md)).
 
 **Connecting.** Peers dial by public key over
 [iroh](https://github.com/n0-computer/iroh). It punches through NAT, so neither
 side needs an open inbound port or a public IP. When it can't punch through, an
-n0 relay forwards the traffic without being able to read it.
+[n0](https://n0.computer/) relay forwards the traffic without being able to read
+it.
 
 **Forwarding.** Each peer hears only the ports granted to it, and traffic runs
 over the encrypted QUIC connection. It goes both ways: something on your own
@@ -265,21 +261,82 @@ something you're working on.
 [SSH tunnels](https://www.ssh.com/academy/ssh/tunneling) need inbound access on at
 least one side. pai-sho works when neither machine has open inbound ports.
 
-[WireGuard](https://www.wireguard.com/), [Tailscale](https://tailscale.com), and
-[NetBird](https://netbird.io/) are mesh VPNs that put every machine on a virtual
-network. pai-sho is narrower: you expose specific ports, not the whole machine,
-which keeps it easy to reason about exactly what is reachable.
+[WireGuard](https://www.wireguard.com/) has no control plane and no relays. It
+only goes direct, so a peer entry in the
+[config file](https://www.wireguard.com/quickstart/) needs an `Endpoint` with a
+routable address. There is no hole punching and no fallback. If both machines are
+behind NAT, you are standing up a bounce host yourself. Tailscale adds that
+machinery around WireGuard; pai-sho gets it from iroh, over QUIC.
 
 [dumbpipe](https://github.com/n0-computer/dumbpipe) is the direct inspiration.
 [pigeons](https://pigeons.computer), SSH over iroh from the same team, is where
 pai-sho's connection handling comes from.
 
+## Why not Tailscale?
+
+You probably should use [Tailscale](https://tailscale.com). It solves this
+problem well, and there is a company behind it.
+
+### No account
+
+The connection machinery is the same. Servers negotiate the initial connection,
+then [hole punching](https://tailscale.com/blog/how-nat-traversal-works) gets a
+direct path. When it can't, a relay carries the traffic:
+[DERP](https://tailscale.com/kb/1232/derp-servers) for Tailscale,
+[iroh's relays](https://www.iroh.computer/docs/concepts/relay) for pai-sho, run
+by [n0](https://n0.computer/). That whole layer comes from
+[iroh](https://github.com/n0-computer/iroh). What Tailscale has and pai-sho does
+not is a row above all that.
+
+```
+Tailscale
+  box ------->  controlplane.tailscale.com  <------- laptop   membership
+  box <~ ~ ~ ~  derp*.tailscale.com         ~ ~ ~ ~> laptop   negotiate, relay
+  box <--------------------------------------------> laptop   direct
+
+pai-sho
+  box <~ ~ ~ ~  *.relay.iroh.network        ~ ~ ~ ~> laptop   negotiate, relay
+  box <--------------------------------------------> laptop   direct
+```
+
+A Tailscale node registers with the
+[coordination server](https://tailscale.com/blog/how-tailscale-works), which
+decides membership and hands it a filtered list of the peers it may see. A
+pai-sho box dials your laptop by public key, resolved by
+[iroh's address lookup](https://www.iroh.computer/docs/concepts/discovery).
+Nothing in that path can add a peer to your set, and there is nothing to sign up
+for.
+
+### Specific ports, not a whole machine
+
+Tailscale gives a peer an IP, and everything listening on it is reachable unless
+an [ACL](https://tailscale.com/kb/1018/acls) says otherwise. Default allow, then
+narrow it. pai-sho grants one port at a time to one key, and a peer with no
+grants sees nothing. Day to day the two feel much the same, since you type a
+name and a port either way.
+
+### Less to install
+
+Without `--tun`, pai-sho binds loopback addresses. On Linux that needs no
+network device and no privilege, because `127.0.0.0/8` already routes to `lo`.
+Tailscale needs a tun device, or its
+[userspace mode](https://tailscale.com/kb/1112/userspace-networking), which
+gives you a proxy rather than real listeners. `--tun` puts pai-sho in the same
+position, so this only holds on loopback.
+
+### Tailscale's ops story is much nicer
+
+One [policy file](https://tailscale.com/kb/1337/policy-syntax) for the whole
+tailnet, so who-can-reach-what is a thing you read in a single place. pai-sho's
+answer is "which command did you run on which machine." A web UI is the obvious
+next step.
+
 ## More
 
 [docs/scenarios.md](docs/scenarios.md) works two flows end to end: a shared build
 box reached from a laptop, and a laptop booting a vibenv. Each says what has to
-be true, what travels between the machines, and why the commands are shaped the
-way they are. Its [invariants](docs/scenarios.md#invariants) are the shortest
+be true and what travels between the machines, and why the commands took the
+shape they did. Its [invariants](docs/scenarios.md#invariants) are the shortest
 statement of the model.
 
 The [ADRs](docs/adr) record the decisions and how they moved: directed grants,
