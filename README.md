@@ -7,7 +7,7 @@
 <p align="center">
   Forward ports between your own machines, peer to peer over <a href="https://github.com/n0-computer/iroh">iroh</a>.<br>
   Neither side needs an account, a public IP, or an open inbound port.<br>
-  Only what you grant is reachable.
+  A port is reachable only by the peers you grant it to.
 </p>
 
 <p align="center">
@@ -32,7 +32,10 @@ box invites your laptop and grants the port in the same command:
 ```sh
 # build box
 pai-sho invite --expose 8080
+# 5hc4bjqfp6...7fd25613dd...   one-time, valid 5 minutes
 ```
+
+Paste the invitation on your laptop, and give the box a name:
 
 ```sh
 # laptop
@@ -42,9 +45,9 @@ curl http://buildbox.pai-sho:8080
 
 ### A laptop boots a VM
 
-The roles reverse here: the consumer invites, and picks the name. You boot a
-dedicated VM per task, a [vibenv](https://github.com/cablehead/vibenv.dag), with
-no inbound ports. Invite it from your laptop before it boots:
+You boot a dedicated VM per task, a [vibenv](https://github.com/cablehead/vibenv.dag),
+with no inbound ports. This time the laptop does the inviting, and names the VM
+before it exists:
 
 ```sh
 pai-sho invite --as vibenv-ndyg
@@ -60,16 +63,17 @@ both:
 pai-sho daemon --accept 5hc4bjqfp6...7fd25613dd... -e 3001,7331
 ```
 
-It is projected on acceptance, with no manual step: an address on your laptop's
-private network, ports bound there under the name you chose. Only your laptop can
-reach it, and anyone else who dials is refused.
+As soon as it connects, the VM gets an address on your laptop's private network,
+and its two ports are bound there under the name you chose. Only your laptop is
+admitted; a dial from any other key is refused.
 
 ```sh
 curl http://vibenv-ndyg.pai-sho:3001
 open http://vibenv-ndyg.pai-sho:7331
 ```
 
-Close the laptop and reopen it. The connection restores and the ports rebind.
+If you close the laptop and reopen it, the connection comes back and the ports
+rebind.
 
 [docs/scenarios.md](docs/scenarios.md) works both through in full.
 
@@ -89,15 +93,15 @@ eget cablehead/pai-sho
 
 Or grab a binary from [releases](https://github.com/cablehead/pai-sho/releases).
 
-Homebrew also ships a supervised launch for the operator: a launchd service that
-creates the private network and points the system at the `.pai-sho` resolver. It
-does not start on its own; see [Setting up the network](#setting-up-the-network).
+Homebrew also ships a launchd service that creates the private network and
+points the system at the `.pai-sho` resolver. It does not start on its own; see
+[Setting up the network](#setting-up-the-network).
 
 ## Setting up the network
 
 `--tun` puts each peer on a private `10.99.0.0/16` network. The daemon sits at
 `10.99.0.1`, peers land on `10.99.1.x`, and the daemon's resolver answers
-`*.pai-sho` in-stack on `10.99.0.53`.
+`*.pai-sho` at `10.99.0.53`.
 
 ### macOS
 
@@ -110,12 +114,11 @@ sudo --preserve-env=XDG_CONFIG_HOME brew services start pai-sho
 ```
 
 `brew trust` records trust for your user. `sudo brew services` is the one root
-use Homebrew allows (it loads a launchd service, runs no build scripts); `sudo
-brew trust` and `sudo brew install` are refused, and that refusal is correct.
-`--preserve-env=XDG_CONFIG_HOME` matters only if you set `XDG_CONFIG_HOME`: plain
-`sudo` strips it, so brew looks for your trust file under `$HOME/.homebrew`
-instead of your real config home and refuses the tap. Preserving it points brew
-back where `brew trust` wrote. (Harmless if you don't set `XDG_CONFIG_HOME`.)
+use Homebrew allows; it loads a launchd service and runs no build scripts.
+`sudo brew trust` and `sudo brew install` are refused.
+`--preserve-env=XDG_CONFIG_HOME` matters only if you set `XDG_CONFIG_HOME`:
+plain `sudo` strips it, so brew looks for your trust file under
+`$HOME/.homebrew` and refuses the tap.
 
 The service creates the utun, points the system at the `.pai-sho` resolver, and
 hands you the control socket, so the CLI needs no sudo:
@@ -146,9 +149,9 @@ pai-sho daemon --tun ps0
 Then send `.pai-sho` to `10.99.0.53`, for example with a dnsmasq
 `server=/pai-sho/10.99.0.53` forward.
 
-Without `--tun`, surfaces fall back to loopback addresses (`127.0.1.x`) and you
-serve the resolver with `--resolver <addr>`. You lose the private network but keep
-the names.
+Without `--tun`, peers are bound at loopback addresses (`127.0.1.x`) and you
+serve the resolver yourself with `--resolver <addr>`. Names still resolve, to
+those addresses.
 
 ## Usage
 
@@ -181,7 +184,7 @@ pai-sho [--socket <path>] <command>
 | `-a, --accept` | | Take up an invitation, or a peer's key, on startup (repeatable) |
 | `-e, --expose` | | Expose port to the `--accept` peers (repeat or comma-separate) |
 | `--key` | `~/.local/state/pai-sho/key` | Secret key path (created if missing) |
-| `--tun` | | Put surfaces on a private TUN network (`utun` on macOS, a pre-created device like `ps0` on Linux); the resolver answers in-stack on `10.99.0.53:53` |
+| `--tun` | | Put surfaces on a private TUN network (`utun` on macOS, a pre-created device like `ps0` on Linux); the resolver answers at `10.99.0.53:53` |
 | `--resolver` | | Loopback mode, an alternative to `--tun`: serve the `*.pai-sho` resolver on this UDP address (e.g. `127.0.0.1:5353`) |
 | `--name` | | This node's own name. The resolver answers `<name>.pai-sho` with `--host`, so a service reached locally and from a peer has one origin, which is what CORS needs |
 | `--socket-owner` | | Username to own the control socket, chowned right after bind. Lets the CLI skip sudo when the daemon runs as root |
@@ -189,19 +192,18 @@ pai-sho [--socket <path>] <command>
 
 ## How it works
 
-**Identity.** Each daemon has a stable key, an iroh endpoint ID backed by a
-keypair at `--key`. Because it does not change, a launcher can bake one
-operator key into every workload it boots.
+**Identity.** Each daemon has a stable key: an iroh endpoint ID, backed by a
+keypair stored at `--key`. Because it never changes, whatever boots your VMs can
+hand each one your laptop's key ahead of time.
 
-**Grants.** Access is default deny. A port becomes reachable only through a grant
-that names the peers allowed to reach it, and is served to them alone. iroh
-proves the connecting peer's key cryptographically, so a grant names a proven
-identity, not a shareable address. You cannot hand out reach by leaking a string
+**Grants.** A port is reachable only by the peers a grant names, and is served
+to them alone. A grant names a key, and iroh proves the connecting peer holds
+that key, so a peer cannot pass its access on to another machine
 ([ADR 0001](docs/adr/0001-directed-grants.md)).
 
 **Invitations.** A connection from an unknown key is refused unless it carries a
-code from `invite`. The code is spent on use, and the peer it admitted survives
-restarts, so a reboot does not orphan a workload. An invitation is
+code from `invite`. The code is spent on use, and the peer it admitted is
+remembered across restarts. An invitation is
 `<key>.<code>`: the key says who to dial, the code admits you. When you already
 know a peer's key, `invite <key>` authorizes it with no secret created at all
 ([ADR 0006](docs/adr/0006-invitations.md),
@@ -220,18 +222,18 @@ the key comes from `pai-sho key` on the machine you are granting to.
 
 **The network.** With `--tun`, the daemon runs its own TCP/IP stack on a private
 network interface. The daemon sits at `10.99.0.1`, peers get addresses on
-`10.99.1.x`, and the resolver answers in-stack on `10.99.0.53:53`. On Linux the
+`10.99.1.x`, and the resolver answers at `10.99.0.53:53`. On Linux the
 interface is created ahead of time and owned by the daemon's user, so the daemon
 needs no elevated capability. On macOS the daemon creates a utun itself, which
 needs root.
 
-**Surfaces.** A peer's ports are addressed together at one address, under the
-name you gave it, or a short form of its key if nothing named it. A peer is
-projected automatically the first time it announces a granted port. Because each
-peer owns its address, two peers can serve the same port without colliding.
-`project` overrides the automatic choice (pin an address with `--ip`, rename with
-`--as`), `unproject` takes a surface down, and projections survive a restart
-([ADR 0004](docs/adr/0004-peer-surfaces.md)).
+**Surfaces.** A peer's ports all live at one local address, under the name you
+gave it, or the first eight characters of its key if you gave none. That address
+with its ports is the peer's surface. It comes up by itself the first time the
+peer announces a granted port. Each peer has its own address, so two peers can
+both serve `8080`. `project` overrides the defaults (pin an address with `--ip`,
+rename with `--as`), `unproject` takes a surface down, and projections survive a
+restart ([ADR 0004](docs/adr/0004-peer-surfaces.md)).
 
 **Resolver.** The daemon answers `<name>.pai-sho` from the live surface table, so
 `vibenv-ndyg.pai-sho` reaches that peer's ports and stops resolving when the peer goes
@@ -243,13 +245,13 @@ dnsmasq `server=/pai-sho/10.99.0.53` forward on Linux
 **Reconnection.** If the connection drops, both sides retry with exponential
 backoff. Projected surfaces stay put and rebind when the link returns.
 
-**Structure.** `src/core/` decides and does no IO: admission, grants, and tunnel
-authorization, unit tested without a network. The shell in `peer.rs` feeds it
-events and carries out the actions it returns
-([ADR 0007](docs/adr/0007-pure-core.md)).
+**Structure.** The decisions (who may connect, which grants exist, whether a
+tunnel is allowed) live in `src/core/`, which does no IO and is unit tested
+without a network. `peer.rs` feeds it events and carries out the actions it
+returns ([ADR 0007](docs/adr/0007-pure-core.md)).
 
-The rules that hold whatever you type are in
-[docs/scenarios.md](docs/scenarios.md#invariants).
+The [invariants](docs/scenarios.md#invariants) in `docs/scenarios.md` are the
+five things that hold no matter which commands you run.
 
 ## See also
 
@@ -261,12 +263,11 @@ something you're working on.
 [SSH tunnels](https://www.ssh.com/academy/ssh/tunneling) need inbound access on at
 least one side. pai-sho works when neither machine has open inbound ports.
 
-[WireGuard](https://www.wireguard.com/) has no control plane and no relays. It
-only goes direct, so a peer entry in the
+[WireGuard](https://www.wireguard.com/) only goes direct: a peer entry in the
 [config file](https://www.wireguard.com/quickstart/) needs an `Endpoint` with a
-routable address. There is no hole punching and no fallback. If both machines are
-behind NAT, you are standing up a bounce host yourself. Tailscale adds that
-machinery around WireGuard; pai-sho gets it from iroh, over QUIC.
+routable address, and there is no hole punching or relay to fall back to. If
+both machines are behind NAT you need a bounce host. Tailscale adds that
+machinery around WireGuard; pai-sho gets it from iroh.
 
 [dumbpipe](https://github.com/n0-computer/dumbpipe) is the direct inspiration.
 [pigeons](https://pigeons.computer), SSH over iroh from the same team, is where
@@ -285,8 +286,8 @@ direct path. When it can't, a relay carries the traffic:
 [DERP](https://tailscale.com/kb/1232/derp-servers) for Tailscale,
 [iroh's relays](https://www.iroh.computer/docs/concepts/relay) for pai-sho, run
 by [n0](https://n0.computer/). That whole layer comes from
-[iroh](https://github.com/n0-computer/iroh). What Tailscale has and pai-sho does
-not is a row above all that.
+[iroh](https://github.com/n0-computer/iroh). Tailscale has one more layer above
+it, the top row here:
 
 ```
 Tailscale
@@ -304,16 +305,15 @@ A Tailscale node registers with the
 decides membership and hands it a filtered list of the peers it may see. A
 pai-sho box dials your laptop by public key, resolved by
 [iroh's address lookup](https://www.iroh.computer/docs/concepts/discovery).
-Nothing in that path can add a peer to your set, and there is nothing to sign up
-for.
+Address lookup only answers where a key is reachable; it cannot add a peer to
+your set, and it needs no sign-up.
 
-### Specific ports, not a whole machine
+### One port at a time
 
 Tailscale gives a peer an IP, and everything listening on it is reachable unless
-an [ACL](https://tailscale.com/kb/1018/acls) says otherwise. Default allow, then
-narrow it. pai-sho grants one port at a time to one key, and a peer with no
-grants sees nothing. Day to day the two feel much the same, since you type a
-name and a port either way.
+an [ACL](https://tailscale.com/kb/1018/acls) says otherwise. pai-sho starts with
+nothing reachable, and you grant one port at a time to one key. Day to day the
+two feel much the same, since you type a name and a port either way.
 
 ### Less to install
 
@@ -326,21 +326,21 @@ position, so this only holds on loopback.
 
 ### Tailscale's ops story is much nicer
 
-One [policy file](https://tailscale.com/kb/1337/policy-syntax) for the whole
-tailnet, so who-can-reach-what is a thing you read in a single place. pai-sho's
-answer is "which command did you run on which machine." A web UI is the obvious
-next step.
+Tailscale has one [policy file](https://tailscale.com/kb/1337/policy-syntax) for
+the whole tailnet, so you can read who can reach what in one place. In pai-sho
+that information is spread across whichever `invite` and `expose` commands ran
+on which machine, and `list` shows one daemon's view of it; nothing yet shows
+the whole picture.
 
 ## More
 
 [docs/scenarios.md](docs/scenarios.md) works two flows end to end: a shared build
 box reached from a laptop, and a laptop booting a vibenv. Each says what has to
 be true and what travels between the machines, and why the commands took the
-shape they did. Its [invariants](docs/scenarios.md#invariants) are the shortest
-statement of the model.
+shape they did.
 
-The [ADRs](docs/adr) record the decisions and how they moved: directed grants,
-two passes at enrollment before invitations landed, peer surfaces, the owned
-resolver, and the pure core.
+The [ADRs](docs/adr) record the decisions and which ones superseded which:
+directed grants, two passes at enrollment before invitations landed, peer
+surfaces, the owned resolver, and the pure core.
 
 Questions or ideas: come by the [Discord](https://discord.com/invite/YNbScHBHrh).

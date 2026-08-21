@@ -21,10 +21,10 @@ mod tunnel;
     about = "Forward ports between your own machines, peer to peer over iroh",
     long_about = "Forward ports between your own machines, peer to peer over iroh. \
 Neither side needs an account, a public IP, or an open inbound port.\n\n\
-Machines link by invitation: one side extends it, the other takes it up. Access \
-is default deny. You grant a port to a specific peer's key, and that peer alone \
-can reach it.\n\n\
-Each peer's ports answer under a name you picked, like vibenv-ndyg.pai-sho.",
+Two machines link by invitation: one runs `invite`, the other runs `accept`. \
+Nothing is reachable until you grant a port to a peer's key, and then only that \
+peer can reach it.\n\n\
+A peer's ports come up under the name you gave it, like vibenv-ndyg.pai-sho.",
     version
 )]
 struct Cli {
@@ -57,9 +57,9 @@ pub enum Command {
         /// 127.0.0.1:5353). Off when omitted.
         #[arg(long)]
         resolver: Option<SocketAddr>,
-        /// Use the TUN owned-network backend on this pre-created device (e.g.
-        /// `ps0`). Surfaces bind on the TUN via a userspace stack, and the
-        /// `.pai-sho` resolver answers in-stack on 10.99.0.53:53. Loopback when omitted.
+        /// Put peers on a private network over this pre-created TUN device (e.g.
+        /// `ps0`). Their ports bind there via a userspace stack, and the
+        /// `.pai-sho` resolver answers at 10.99.0.53:53. Loopback when omitted.
         #[arg(long)]
         tun: Option<String>,
         /// Username to own the control socket, chowned right after bind (before
@@ -69,16 +69,16 @@ pub enum Command {
         /// Octal mode for the control socket, e.g. `660` (chmod'd after bind).
         #[arg(long = "socket-mode")]
         socket_mode: Option<String>,
-        /// This node's own name; the owned resolver answers `<name>.pai-sho`
-        /// with 127.0.0.1, so local traffic uses the same origin peers do.
+        /// This node's own name. The resolver answers `<name>.pai-sho` with
+        /// 127.0.0.1, so a service has the same origin locally and from a peer.
         #[arg(long)]
         name: Option<String>,
     },
 
-    /// Extend an invitation. Without a key, prints a one-time invitation valid
-    /// 5 minutes. With one, authorizes that key alone and creates no secret.
+    /// Invite a peer. Without a key, prints a one-time invitation valid 5
+    /// minutes. With a key, authorizes that key alone and creates no secret.
     Invite {
-        /// Peer's key, for when nothing secret can safely travel to it.
+        /// Peer's key, for when no secret can safely be sent to it.
         /// See docs/adr/0003-host-attested-enrollment.md
         key: Option<String>,
         /// What to call the peer that takes this up
@@ -104,21 +104,23 @@ pub enum Command {
         peer: String,
     },
 
-    /// Grant a local port to named peers. Nothing is reachable without one.
+    /// Grant a local port to specific peers. Nothing is reachable without a grant.
     #[command(group = ArgGroup::new("grantees").required(true).args(["to", "all"]))]
     Expose {
+        /// Local port to grant
         port: u16,
         /// Peer key(s) to grant the port to
         #[arg(long = "to")]
         to: Vec<String>,
-        /// Grant to every peer known right now. Not a standing rule: a peer
-        /// admitted later gets nothing.
+        /// Grant to every peer known right now. A peer admitted later gets
+        /// nothing.
         #[arg(long = "all")]
         all: bool,
     },
 
-    /// Revoke grants for a port. Bare, it revokes every grant for that port.
+    /// Revoke grants for a port. Without --to, every grant for that port.
     Unexpose {
+        /// Local port to revoke
         port: u16,
         /// Revoke only this peer's grant; defaults to every grant for the port
         #[arg(long = "to")]
@@ -131,8 +133,8 @@ pub enum Command {
     /// Print this daemon's key
     Key,
 
-    /// Override where a peer's ports are bound. Peers are projected
-    /// automatically, so this is only needed to pin an address or rename one.
+    /// Override where a peer's ports are bound. Peers get an address and a name
+    /// automatically, so this is only needed to pin one or rename it.
     /// See docs/adr/0004-peer-surfaces.md.
     Project {
         /// Peer to project (a key or the name you gave it)
@@ -140,7 +142,7 @@ pub enum Command {
         /// Local address to bind at; allocated from 127.0.1.0/24 if omitted
         #[arg(long)]
         ip: Option<IpAddr>,
-        /// Rename this peer's surface (e.g. `broker`)
+        /// Rename this peer (e.g. `broker`)
         #[arg(long = "as")]
         name: Option<String>,
     },
