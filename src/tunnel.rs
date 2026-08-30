@@ -18,7 +18,7 @@ pub async fn bind_listener(addr: SocketAddr) -> Result<TcpListener> {
 /// Accept loop: forward each connection on `listener` to the peer's port
 pub async fn serve_listener<P>(listener: TcpListener, port: u16, peer: &P) -> Result<()>
 where
-    P: PeerConnection + Send + Sync + 'static,
+    P: PeerConnection + Clone + Send + Sync + 'static,
 {
     match listener.local_addr() {
         Ok(addr) => info!("listening on {}", addr),
@@ -30,19 +30,22 @@ where
         stream.set_nodelay(true).ok();
         debug!("accepted connection from {} on port {}", client_addr, port);
 
-        // Open connection to peer for this port
-        match peer.open_tunnel(port).await {
-            Ok((send, recv)) => {
-                tokio::spawn(async move {
+        // Open the QUIC stream off the accept loop so the next client is not
+        // queued behind someone else's handshake, and this socket can start
+        // buffering in the kernel immediately.
+        let peer = peer.clone();
+        tokio::spawn(async move {
+            match peer.open_tunnel(port).await {
+                Ok((send, recv)) => {
                     if let Err(e) = forward_bidirectional(stream, send, recv).await {
                         error!("tunnel error: {}", e);
                     }
-                });
+                }
+                Err(e) => {
+                    error!("failed to open tunnel to peer for port {}: {}", port, e);
+                }
             }
-            Err(e) => {
-                error!("failed to open tunnel to peer for port {}: {}", port, e);
-            }
-        }
+        });
     }
 }
 
@@ -86,13 +89,17 @@ async fn forward_bidirectional(
     Ok(())
 }
 
-/// Copy from `reader` to `writer`, flushing after every chunk. Pattern from
-/// n0-computer/pigeons (https://github.com/n0-computer/pigeons), the iroh team's
-/// SSH-over-iroh tool. It forces each piece onto the wire instead of letting a
-/// writer coalesce. Measured against plain `tokio::io::copy` on a Mac-to-Hetzner
-/// forward, this changed nothing: the wide-area hop is QUIC (no Nagle) and the
-/// TCP sockets are on localhost, so there was no coalescing delay to remove. Kept
-/// because it is cheap and starts to matter once a forwarded hop is not localhost.
+/// Copy from `reader` to `writer` one read at a time.
+///
+/// Do not flush after each chunk. Kernel `TcpStream` and iroh `SendStream`
+/// treat flush as a no-op, so it did nothing on the loopback path. On the TUN
+/// path, tokio-smoltcp's flush waits until the TCP peer ACKs the tx buffer.
+/// That turned this loop into stop-and-wait: an SSE event split across two
+/// reads (`data: ...` then `\n\n`) sat mid-frame until the ACK of the first
+/// half, and EventSource would not dispatch.
+///
+/// `write_all` already waits when the writer cannot take more. Callers shut
+/// the stream down when this returns.
 pub async fn copy_flush<R, W>(reader: &mut R, writer: &mut W) -> std::io::Result<u64>
 where
     R: AsyncRead + Unpin,
@@ -106,7 +113,6 @@ where
             return Ok(total);
         }
         writer.write_all(&buf[..n]).await?;
-        writer.flush().await?;
         total += n as u64;
     }
 }
@@ -119,4 +125,118 @@ pub trait PeerConnection: Send + Sync {
     ) -> impl std::future::Future<
         Output = Result<(iroh::endpoint::SendStream, iroh::endpoint::RecvStream)>,
     > + Send;
+}
+
+#[cfg(test)]
+mod sse_flush_repro {
+    use super::copy_flush;
+    use std::pin::Pin;
+    use std::sync::{Arc, Mutex};
+    use std::task::{Context, Poll};
+    use std::time::Duration;
+    use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+
+    /// An SSE event that arrives as two `read`s: the data line, then the
+    /// terminator. EventSource will not dispatch until it has both.
+    const FIRST: &[u8] = b"data: hello";
+    const REST: &[u8] = b"\n\n";
+
+    struct SplitSse {
+        stage: usize,
+    }
+
+    impl AsyncRead for SplitSse {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            let chunk = match self.stage {
+                0 => FIRST,
+                1 => REST,
+                _ => return Poll::Ready(Ok(())),
+            };
+            buf.put_slice(chunk);
+            self.stage += 1;
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    struct WriterState {
+        written: Vec<u8>,
+        /// If true, flush panics: that is smoltcp waiting for a TCP ACK.
+        flush_blocks: bool,
+    }
+
+    #[derive(Clone)]
+    struct ProbeWriter {
+        state: Arc<Mutex<WriterState>>,
+    }
+
+    impl ProbeWriter {
+        fn new(flush_blocks: bool) -> Self {
+            Self {
+                state: Arc::new(Mutex::new(WriterState {
+                    written: Vec::new(),
+                    flush_blocks,
+                })),
+            }
+        }
+
+        fn written(&self) -> Vec<u8> {
+            self.state.lock().unwrap().written.clone()
+        }
+    }
+
+    impl AsyncWrite for ProbeWriter {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<std::io::Result<usize>> {
+            self.state.lock().unwrap().written.extend_from_slice(buf);
+            Poll::Ready(Ok(buf.len()))
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            if self.state.lock().unwrap().flush_blocks {
+                panic!("copy_flush must not flush; smoltcp flush waits for a TCP ACK");
+            }
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    /// Regression: smoltcp flush waits for ACK. This loop must still enqueue
+    /// the SSE terminator without that ACK, or EventSource never fires.
+    #[tokio::test]
+    async fn copy_flush_writes_sse_terminator_without_waiting_for_ack() {
+        let writer = ProbeWriter::new(true);
+        let probe = writer.clone();
+        let mut reader = SplitSse { stage: 0 };
+
+        tokio::time::timeout(
+            Duration::from_millis(200),
+            copy_flush(&mut reader, &mut writer.clone()),
+        )
+        .await
+        .expect("copy_flush blocked waiting for a TCP ACK")
+        .unwrap();
+
+        assert_eq!(probe.written(), [FIRST, REST].concat());
+    }
+
+    #[tokio::test]
+    async fn copy_flush_forwards_whole_sse_event_when_flush_is_noop() {
+        let writer = ProbeWriter::new(false);
+        let probe = writer.clone();
+        let mut reader = SplitSse { stage: 0 };
+
+        copy_flush(&mut reader, &mut writer.clone()).await.unwrap();
+
+        assert_eq!(probe.written(), [FIRST, REST].concat());
+    }
 }
