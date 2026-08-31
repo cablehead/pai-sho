@@ -2,9 +2,15 @@
 
 use anyhow::{Context, Result};
 use std::net::{IpAddr, SocketAddr};
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
+
+/// `write_all` longer than this means the writer is full (TUN tx buffer or
+/// QUIC stream window) and we are waiting on an ACK. Local TUN ACKs are
+/// well under this.
+const WRITE_WAIT_WARN: Duration = Duration::from_millis(10);
 
 /// Bind the local listener for a forwarded port at `addr`. Kept separate from
 /// the accept loop so a failed bind (address already in use) surfaces to the
@@ -112,7 +118,12 @@ where
         if n == 0 {
             return Ok(total);
         }
+        let started = Instant::now();
         writer.write_all(&buf[..n]).await?;
+        let waited = started.elapsed();
+        if waited >= WRITE_WAIT_WARN {
+            warn!("tunnel write of {n} bytes waited {waited:?} (writer full?)");
+        }
         total += n as u64;
     }
 }
