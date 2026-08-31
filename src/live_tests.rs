@@ -197,6 +197,25 @@ async fn bound_addr(b: &TestDaemon, port: u16) -> SocketAddr {
 
 // ---------------------------------------------------------------------------
 
+/// Write `data: ping`, wait until the caller says so, then write `\n\n`.
+/// Stays open. Returns the port and a oneshot that releases the terminator.
+async fn sse_split_server() -> (u16, tokio::sync::oneshot::Sender<()>) {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (release_rest, wait_rest) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        sock.set_nodelay(true).ok();
+        sock.write_all(b"data: ping").await.unwrap();
+        sock.flush().await.ok();
+        let _ = wait_rest.await;
+        sock.write_all(b"\n\n").await.unwrap();
+        sock.flush().await.ok();
+        std::future::pending::<()>().await;
+    });
+    (port, release_rest)
+}
+
 #[tokio::test]
 async fn a_granted_port_carries_bytes() {
     let port = echo_server().await;
@@ -217,6 +236,40 @@ async fn a_granted_port_carries_bytes() {
     let mut buf = [0u8; 13];
     sock.read_exact(&mut buf).await.unwrap();
     assert_eq!(&buf, b"hello pai-sho");
+}
+
+#[tokio::test]
+async fn an_sse_fragment_arrives_before_the_rest_is_sent() {
+    let (port, release_rest) = sse_split_server().await;
+    let (a, b) = pair(IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
+    enroll(&a, &b, "b").await;
+
+    a.request(Request::Expose {
+        port,
+        to: vec![b.key()],
+        all: false,
+    })
+    .await;
+
+    let addr = bound_addr(&b, port).await;
+    let mut sock = TcpStream::connect(addr).await.unwrap();
+    sock.set_nodelay(true).ok();
+
+    let mut first = [0u8; 10];
+    tokio::time::timeout(Duration::from_secs(2), sock.read_exact(&mut first))
+        .await
+        .expect("first SSE fragment did not arrive before the terminator was sent")
+        .unwrap();
+    assert_eq!(&first, b"data: ping");
+
+    release_rest.send(()).unwrap();
+
+    let mut rest = [0u8; 2];
+    tokio::time::timeout(Duration::from_secs(2), sock.read_exact(&mut rest))
+        .await
+        .expect("SSE terminator did not arrive")
+        .unwrap();
+    assert_eq!(&rest, b"\n\n");
 }
 
 #[tokio::test]
