@@ -25,7 +25,7 @@ use tokio_smoltcp::smoltcp::{
     phy::{DeviceCapabilities, Medium},
     wire::{HardwareAddress, IpAddress, IpCidr},
 };
-use tokio_smoltcp::{BufferSize, Net, NetConfig, TcpStream};
+use tokio_smoltcp::{Net, NetConfig, TcpStream};
 use tracing::{error, info, warn};
 
 const MTU: usize = 1500;
@@ -326,13 +326,6 @@ pub fn spawn(
     let mut ifcfg = tokio_smoltcp::smoltcp::iface::Config::new(HardwareAddress::Ip);
     ifcfg.random_seed = rand::random();
     let mut cfg = NetConfig::new(ifcfg, IpCidr::new(ip4(resolver_ip), 16), vec![]);
-    // Default is 8 KiB. A Datastar SSE patch is often larger, and an 8 KiB
-    // window splits the frame mid-event until the peer ACKs.
-    cfg.buffer_size = BufferSize {
-        tcp_rx_size: 256 * 1024,
-        tcp_tx_size: 256 * 1024,
-        ..BufferSize::default()
-    };
     let net = Net::new(device, cfg);
     net.set_any_ip(true);
     let net = Arc::new(net);
