@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 /// ALPN protocol identifier
 pub const ALPN: &[u8] = b"PAI_SHO/1";
 
+/// This crate's version, announced to peers and shown by `list`.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 // ============================================================================
 // Client <-> Daemon (over Unix socket)
 // ============================================================================
@@ -71,6 +74,14 @@ pub enum Response {
 pub struct ListInfo {
     /// This node's own key
     pub me: String,
+    /// The `pai-sho` binary that issued `list`. Empty on the daemon's own
+    /// response; the CLI fills it in before printing.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub cli: String,
+    /// The running daemon's crate version. Empty when that daemon is older
+    /// than this field and omitted it.
+    #[serde(default)]
+    pub daemon: String,
     pub peers: Vec<PeerInfo>,
     /// Ports this node exposes (distinct granted ports)
     pub i_expose: Vec<u16>,
@@ -90,6 +101,9 @@ pub struct PeerInfo {
     pub key: String,
     /// What we call this peer locally, absent until something names it
     pub name: Option<String>,
+    /// The peer's crate version, absent until it announces one
+    #[serde(default)]
+    pub version: Option<String>,
     pub online: bool,
     /// How this peer came to be admitted: "added", "code", or "key"
     pub admission: String,
@@ -112,8 +126,69 @@ pub enum PeerMessage {
     ExposedPorts(Vec<u16>),
     /// Request to connect to a specific port
     Connect { port: u16 },
-    /// Present an invitation's one-time code (sent on connect by `accept`)
-    Enroll { token: String },
+    /// Present an invitation's one-time code (sent on connect by `accept`).
+    /// `version` is this daemon's crate version. Older daemons ignore unknown
+    /// fields, so the claim still works; they just never send one themselves.
+    Enroll {
+        token: String,
+        #[serde(default)]
+        version: Option<String>,
+    },
     /// Error response
     Error(String),
+}
+
+impl PeerMessage {
+    /// An Enroll that also announces our crate version.
+    pub fn enroll(token: impl Into<String>) -> Self {
+        Self::Enroll {
+            token: token.into(),
+            version: Some(VERSION.to_string()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_old_enroll_still_parses() {
+        let msg: PeerMessage = serde_json::from_str(r#"{"Enroll":{"token":"abc"}}"#).unwrap();
+        match msg {
+            PeerMessage::Enroll { token, version } => {
+                assert_eq!(token, "abc");
+                assert!(version.is_none());
+            }
+            other => panic!("expected Enroll, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_old_peer_still_parses_an_enroll_that_carries_version() {
+        // 0.5.0/0.5.1 Enroll only has `token`. serde ignores unknown fields, so
+        // the claim still lands. This is that old shape.
+        #[derive(Deserialize)]
+        struct OldEnroll {
+            token: String,
+        }
+        #[derive(Deserialize)]
+        enum OldMessage {
+            Enroll(OldEnroll),
+        }
+
+        let json = serde_json::to_string(&PeerMessage::enroll("abc")).unwrap();
+        let old: OldMessage = serde_json::from_str(&json).unwrap();
+        match old {
+            OldMessage::Enroll(e) => assert_eq!(e.token, "abc"),
+        }
+    }
+
+    #[test]
+    fn an_old_list_has_an_empty_daemon_version() {
+        let info: ListInfo =
+            serde_json::from_str(r#"{"me":"abc","peers":[],"i_expose":[],"grants":[]}"#).unwrap();
+        assert!(info.cli.is_empty());
+        assert!(info.daemon.is_empty());
+    }
 }

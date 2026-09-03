@@ -185,7 +185,7 @@ impl Session {
         msg: PeerMessage,
     ) -> Vec<Action> {
         match msg {
-            PeerMessage::Enroll { token } => match self.tokens.claim(&token) {
+            PeerMessage::Enroll { token, version: _ } => match self.tokens.claim(&token) {
                 Some(claimed) => {
                     let early = self
                         .pending
@@ -478,6 +478,7 @@ mod tests {
             k,
             PeerMessage::Enroll {
                 token: "nope".into(),
+                version: None,
             },
         );
         assert_eq!(
@@ -497,7 +498,14 @@ mod tests {
         let token = s.mint_token(Some("rustdev".into()), vec![]);
         s.on_inbound(conn, k);
 
-        let actions = s.on_unadmitted(conn, k, PeerMessage::Enroll { token });
+        let actions = s.on_unadmitted(
+            conn,
+            k,
+            PeerMessage::Enroll {
+                token,
+                version: None,
+            },
+        );
         assert_eq!(
             actions,
             vec![
@@ -531,12 +539,20 @@ mod tests {
             first,
             PeerMessage::Enroll {
                 token: token.clone(),
+                version: None,
             },
         );
 
         let second = key(2);
         s.on_inbound(ConnId(2), second);
-        let actions = s.on_unadmitted(ConnId(2), second, PeerMessage::Enroll { token });
+        let actions = s.on_unadmitted(
+            ConnId(2),
+            second,
+            PeerMessage::Enroll {
+                token,
+                version: None,
+            },
+        );
         assert_eq!(
             actions,
             vec![Action::Refuse {
@@ -567,7 +583,14 @@ mod tests {
         s.on_inbound(conn, k);
         s.on_unadmitted(conn, k, PeerMessage::ExposedPorts(vec![4000, 4001]));
 
-        let actions = s.on_unadmitted(conn, k, PeerMessage::Enroll { token });
+        let actions = s.on_unadmitted(
+            conn,
+            k,
+            PeerMessage::Enroll {
+                token,
+                version: None,
+            },
+        );
         assert!(actions.contains(&Action::ApplyPorts {
             peer: k,
             ports: vec![4000, 4001]
@@ -654,7 +677,14 @@ mod tests {
         let token = s.mint_token(None, vec![8080]);
         s.on_inbound(conn, k);
 
-        let actions = s.on_unadmitted(conn, k, PeerMessage::Enroll { token });
+        let actions = s.on_unadmitted(
+            conn,
+            k,
+            PeerMessage::Enroll {
+                token,
+                version: None,
+            },
+        );
         assert!(actions.contains(&Action::Announce {
             peer: k,
             ports: vec![8080]
@@ -668,7 +698,14 @@ mod tests {
         let mut s = session_with(a);
         let token = s.mint_token(None, vec![8080]);
         s.on_inbound(ConnId(1), b);
-        s.on_unadmitted(ConnId(1), b, PeerMessage::Enroll { token });
+        s.on_unadmitted(
+            ConnId(1),
+            b,
+            PeerMessage::Enroll {
+                token,
+                version: None,
+            },
+        );
 
         assert_eq!(s.on_tunnel(&b, 8080), Action::ServeTunnel { port: 8080 });
         assert_eq!(

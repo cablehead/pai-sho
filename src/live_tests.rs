@@ -10,7 +10,7 @@
 //! src/core/session.rs, without any of this machinery.
 
 use crate::daemon::Daemon;
-use crate::protocol::{Request, Response, ALPN};
+use crate::protocol::{Request, Response, ALPN, VERSION};
 use iroh::address_lookup::memory::MemoryLookup;
 use iroh::endpoint::{presets, PortmapperConfig};
 use iroh::{Endpoint, EndpointAddr, RelayMode};
@@ -312,6 +312,29 @@ async fn a_peer_with_no_grant_is_told_nothing() {
     let peers = b.daemon.peers().list().await;
     let a_seen = peers.iter().find(|p| p.key == a.key()).unwrap();
     assert!(a_seen.they_expose.is_empty());
+}
+
+#[tokio::test]
+async fn list_shows_our_version_and_the_peers() {
+    let (a, b) = pair(IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
+    enroll(&a, &b, "b").await;
+
+    until(20, || async {
+        let Response::List(a_list) = a.request(Request::List).await else {
+            return None;
+        };
+        let Response::List(b_list) = b.request(Request::List).await else {
+            return None;
+        };
+        let a_sees_b = a_list.peers.iter().find(|p| p.key == b.key())?;
+        let b_sees_a = b_list.peers.iter().find(|p| p.key == a.key())?;
+        (a_list.daemon == VERSION
+            && b_list.daemon == VERSION
+            && a_sees_b.version.as_deref() == Some(VERSION)
+            && b_sees_a.version.as_deref() == Some(VERSION))
+        .then_some(())
+    })
+    .await;
 }
 
 #[tokio::test]

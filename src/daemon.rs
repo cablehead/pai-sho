@@ -4,7 +4,7 @@ use crate::core::invite::{Handle, Invite};
 use crate::core::session::Session;
 use crate::enroll::Pins;
 use crate::peer::PeerManager;
-use crate::protocol::{GrantInfo, ListInfo, Request, Response, ALPN};
+use crate::protocol::{GrantInfo, ListInfo, Request, Response, ALPN, VERSION};
 use crate::surface::SurfaceStore;
 use anyhow::{anyhow, Context, Result};
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
@@ -247,6 +247,8 @@ impl Daemon {
         };
         ListInfo {
             me: self.endpoint.id().to_string(),
+            cli: String::new(),
+            daemon: VERSION.to_string(),
             peers: self.peers.list().await,
             i_expose,
             grants: all_grants

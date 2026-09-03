@@ -1,6 +1,6 @@
 //! CLI client - sends commands to daemon over Unix socket.
 
-use crate::protocol::{Request, Response};
+use crate::protocol::{Request, Response, VERSION};
 use crate::Command;
 use anyhow::{Context, Result};
 use std::path::Path;
@@ -47,7 +47,8 @@ pub async fn send_command(socket_path: &Path, command: Command) -> Result<()> {
         Response::Ok => println!("OK"),
         Response::Key(key) => println!("{}", key),
         Response::Invite(invite) => println!("{}", invite),
-        Response::List(info) => {
+        Response::List(mut info) => {
+            info.cli = VERSION.to_string();
             println!("{}", serde_json::to_string_pretty(&info)?);
         }
         Response::Error(e) => {

@@ -46,6 +46,8 @@ struct Peer {
     connection: RwLock<Option<Connection>>,
     /// Ports this peer exposes
     exposed_ports: RwLock<Vec<u16>>,
+    /// Crate version the peer last announced. None until it sends one.
+    version: RwLock<Option<String>>,
     /// Where this peer's ports are bound locally. None until projected: an
     /// unprojected peer's ports are known but have no listener.
     surface: RwLock<Option<Surface>>,
@@ -72,6 +74,7 @@ impl Peer {
             enroll_token,
             connection: RwLock::new(connection),
             exposed_ports: RwLock::new(Vec::new()),
+            version: RwLock::new(None),
             surface: RwLock::new(None),
             bindings: DashMap::new(),
             conn_notify: Notify::new(),
@@ -267,9 +270,7 @@ impl PeerManager {
                         // Re-present the enroll token in case the peer never
                         // processed it (it ignores the message once we are pinned)
                         if let Some(token) = &peer.enroll_token {
-                            let msg = PeerMessage::Enroll {
-                                token: token.clone(),
-                            };
+                            let msg = PeerMessage::enroll(token.clone());
                             if let Err(e) = Self::send_message(&conn, &msg).await {
                                 warn!("failed to send enroll token: {}", e);
                             }
@@ -294,6 +295,12 @@ impl PeerManager {
             let guard = peer.connection.read().await;
             guard.clone().ok_or_else(|| anyhow!("disconnected"))?
         };
+
+        // The dialer already announced version on its Enroll. Sending another
+        // Enroll with an empty token would race that claim on the other side.
+        if peer.enroll_token.is_none() {
+            Self::send_version(peer).await;
+        }
 
         loop {
             tokio::select! {
@@ -346,8 +353,13 @@ impl PeerManager {
             PeerMessage::Connect { port: _ } => {
                 warn!("unexpected Connect message on control stream");
             }
-            PeerMessage::Enroll { .. } => {
-                // Peer is already known; nothing to enroll
+            PeerMessage::Enroll { version, .. } => {
+                // Peer is already known; nothing to enroll. Version, if any,
+                // is the reason this message shows up again after admission.
+                if let Some(version) = version {
+                    info!("{} reports version {}", peer.endpoint_id, version);
+                    *peer.version.write().await = Some(version);
+                }
             }
             PeerMessage::Error(e) => {
                 error!("peer error: {}", e);
@@ -723,7 +735,9 @@ impl PeerManager {
 
         // Feed the core every control message until it admits or refuses. The
         // ExposedPorts / Enroll order is not fixed: they arrive on separate uni
-        // streams, and the core buffers whichever lands first.
+        // streams, and the core buffers whichever lands first. Version rides on
+        // Enroll as an extra field; the shell copies it, the core ignores it.
+        let mut early_version = None;
         let verdict = tokio::time::timeout(ENROLL_TIMEOUT, async {
             loop {
                 let mut recv = conn.accept_uni().await?;
@@ -732,6 +746,13 @@ impl PeerManager {
                     Ok(msg) => msg,
                     Err(_) => continue,
                 };
+                if let PeerMessage::Enroll {
+                    version: Some(version),
+                    ..
+                } = &msg
+                {
+                    early_version = Some(version.clone());
+                }
                 let actions = self
                     .session
                     .lock()
@@ -772,11 +793,27 @@ impl PeerManager {
         );
 
         let peer = Peer::new(remote_id, label, false, None, Some(conn));
+        if let Some(version) = early_version {
+            *peer.version.write().await = Some(version);
+        }
         self.peers.insert(remote_id, peer.clone());
         self.spawn_connection_loop(peer.clone());
 
         self.apply(&peer, actions).await;
         Ok(())
+    }
+
+    /// Tell a peer our crate version on an Enroll they already know how to
+    /// read. Token is empty: they are already admitted and ignore Enroll.
+    async fn send_version(peer: &Peer) {
+        let msg = PeerMessage::enroll("");
+
+        let conn = peer.connection.read().await;
+        if let Some(conn) = conn.as_ref() {
+            if let Err(e) = Self::send_message(conn, &msg).await {
+                warn!("failed to send version to {}: {}", peer.endpoint_id, e);
+            }
+        }
     }
 
     /// Send a peer its port list. Always sent, even when empty, so a
@@ -835,6 +872,7 @@ impl PeerManager {
                 online,
                 admission: admission.to_string(),
                 they_expose: peer.exposed_ports.read().await.clone(),
+                version: peer.version.read().await.clone(),
                 ip: surface.as_ref().map(|s| s.ip.to_string()),
                 bound,
             });
