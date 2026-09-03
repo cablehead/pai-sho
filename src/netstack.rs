@@ -325,7 +325,7 @@ pub fn spawn(
 
     let mut ifcfg = tokio_smoltcp::smoltcp::iface::Config::new(HardwareAddress::Ip);
     ifcfg.random_seed = rand::random();
-    let mut cfg = NetConfig::new(ifcfg, IpCidr::new(ip4(resolver_ip), 16), vec![]);
+    let cfg = NetConfig::new(ifcfg, IpCidr::new(ip4(resolver_ip), 16), vec![]);
     let net = Net::new(device, cfg);
     net.set_any_ip(true);
     let net = Arc::new(net);
