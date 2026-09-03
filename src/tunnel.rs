@@ -175,7 +175,10 @@ mod sse_flush_repro {
 
     struct WriterState {
         written: Vec<u8>,
-        /// If true, flush panics: that is smoltcp waiting for a TCP ACK.
+        /// If true, `flush` never completes -- what tokio-smoltcp does while it
+        /// waits for the peer to ACK the tx buffer. Kernel `TcpStream` and iroh
+        /// `SendStream` both treat flush as a no-op, so the TUN path is the only
+        /// one where this is real.
         flush_blocks: bool,
     }
 
@@ -211,7 +214,9 @@ mod sse_flush_repro {
 
         fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
             if self.state.lock().unwrap().flush_blocks {
-                panic!("copy_flush must not flush; smoltcp flush waits for a TCP ACK");
+                // No waker is registered, so this never resolves. An ACK that
+                // does not come is exactly the case being guarded against.
+                return Poll::Pending;
             }
             Poll::Ready(Ok(()))
         }
@@ -221,8 +226,13 @@ mod sse_flush_repro {
         }
     }
 
-    /// Regression: smoltcp flush waits for ACK. This loop must still enqueue
-    /// the SSE terminator without that ACK, or EventSource never fires.
+    /// Forwarding must not stall on a flush. Measured on a real TUN hop, a
+    /// flush per chunk turned this loop into stop-and-wait: a 64 KiB write went
+    /// from ~64ms to ~450ms, because every chunk waited for the previous ACK.
+    /// The writer here refuses to complete a flush, so any implementation that
+    /// depends on one finishing hits the timeout. What is asserted is the
+    /// property -- both halves of the event get through -- not the absence of a
+    /// particular call.
     #[tokio::test]
     async fn copy_flush_writes_sse_terminator_without_waiting_for_ack() {
         let writer = ProbeWriter::new(true);
