@@ -209,6 +209,16 @@ know a peer's key, `invite <key>` authorizes it with no secret created at all
 ([ADR 0006](docs/adr/0006-invitations.md),
 [ADR 0003](docs/adr/0003-host-attested-enrollment.md)).
 
+**Admission.** `list` reports how each peer got in, because the three routes
+carry different weight when auditing: a code was held by whoever used it, a key
+was vouched for ahead of time.
+
+| `admission` | How the peer arrived |
+|-------------|----------------------|
+| `code` | It dialed in presenting a one-time `invite` code, which was spent on use. |
+| `added` | Its key was taken up on this side with `accept`, or `daemon --accept`. This daemon dials it. |
+| `key` | Its key was authorized ahead of time with `invite <key>`, no secret created. It dials in; this daemon never dials it. |
+
 **Connecting.** Peers dial by public key over
 [iroh](https://github.com/n0-computer/iroh). It punches through NAT, so neither
 side needs an open inbound port or a public IP. When it can't punch through, an
