@@ -284,9 +284,8 @@ impl Daemon {
                         Ok(ids)
                     }
                 } else {
-                    to.iter()
-                        .map(|k| k.parse().context("invalid peer key"))
-                        .collect()
+                    let session = self.session.lock().unwrap();
+                    to.iter().map(|r| session.resolve_grantee(r)).collect()
                 };
                 match grantees {
                     Ok(grantees) => match self.expose(port, &grantees).await {
@@ -298,7 +297,7 @@ impl Daemon {
             }
             Request::Unexpose { port, to } => {
                 let grantee: Result<Option<EndpointId>> = to
-                    .map(|k| k.parse().context("invalid peer key"))
+                    .map(|r| self.session.lock().unwrap().resolve_grantee(&r))
                     .transpose();
                 match grantee {
                     Ok(grantee) => match self.unexpose(port, grantee).await {

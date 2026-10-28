@@ -17,6 +17,7 @@
 use crate::core::grants::Grants;
 use crate::enroll::Tokens;
 use crate::protocol::PeerMessage;
+use anyhow::{anyhow, Result};
 use iroh::EndpointId;
 use std::collections::BTreeMap;
 
@@ -309,6 +310,29 @@ impl Session {
         self.peers.keys().copied().collect()
     }
 
+    /// Turn a `--to` argument into the key a grant names. A key is taken as
+    /// is, admitted or not, so a grant can precede admission and a forgotten
+    /// peer's grant can still be revoked. Anything else must be the label of
+    /// exactly one admitted peer: a grant never guesses between two.
+    pub fn resolve_grantee(&self, peer_ref: &str) -> Result<EndpointId> {
+        if let Ok(key) = peer_ref.parse() {
+            return Ok(key);
+        }
+        let mut matches = self
+            .peers
+            .iter()
+            .filter(|(_, p)| p.label.as_deref() == Some(peer_ref))
+            .map(|(k, _)| *k);
+        match (matches.next(), matches.next()) {
+            (Some(key), None) => Ok(key),
+            (Some(_), Some(_)) => Err(anyhow!(
+                "more than one peer is named {}, use its key",
+                peer_ref
+            )),
+            (None, _) => Err(anyhow!("no peer key or name matches {}", peer_ref)),
+        }
+    }
+
     pub fn admission_of(&self, peer: &EndpointId) -> Option<Admission> {
         self.peers.get(peer).map(|p| p.admission)
     }
@@ -395,6 +419,35 @@ mod tests {
                 reason: Refusal::NotGranted
             }
         );
+    }
+
+    // -- grantee resolution ------------------------------------------------
+
+    #[test]
+    fn a_grantee_can_be_named_by_label() {
+        let a = key(1);
+        let s = session_with(a);
+        assert_eq!(s.resolve_grantee("peer").unwrap(), a);
+    }
+
+    #[test]
+    fn a_key_is_a_grantee_even_before_admission() {
+        let a = key(1);
+        let s = Session::new();
+        assert_eq!(s.resolve_grantee(&a.to_string()).unwrap(), a);
+    }
+
+    #[test]
+    fn an_unknown_name_is_refused() {
+        let s = session_with(key(1));
+        assert!(s.resolve_grantee("nobody").is_err());
+    }
+
+    #[test]
+    fn a_name_two_peers_share_is_refused() {
+        let mut s = session_with(key(1));
+        s.admit_known(key(2), Some("peer".into()), Admission::Added);
+        assert!(s.resolve_grantee("peer").is_err());
     }
 
     // -- announcement ------------------------------------------------------
