@@ -194,8 +194,8 @@ pai-sho [--socket <path>] <command>
 | `invite [<key>] [--as <name>] [--expose <port>...]` | Extend an invitation. With a key, to that key alone (host-attested, no secret). Without one, print a one-time invitation valid 5 minutes. |
 | `accept <invite\|key> [--as <name>]` | Take up an invitation, or reach a peer by key |
 | `forget <peer>` | Forget a peer: close it, unbind its ports, revoke its grants |
-| `expose <port> (--to <key> \| --all)` | Grant a local port to named peers. Nothing is reachable without a grant |
-| `unexpose <port> [--to <key>]` | Revoke grants for a port, or just one peer's |
+| `expose <port> (--to <key\|name> \| --all)` | Grant a local port to named peers. Nothing is reachable without a grant |
+| `unexpose <port> [--to <key\|name>]` | Revoke grants for a port, or just one peer's |
 | `project <peer> [--ip <addr>] [--as <name>]` | Bind a peer's ports at a local address |
 | `unproject <peer>` | Take a peer's surface down (unbind its ports) |
 | `list` | Peers, grants, and where their ports are bound (JSON) |
@@ -254,7 +254,8 @@ it.
 **Forwarding.** Each peer hears only the ports granted to it, and traffic runs
 over the encrypted QUIC connection. It goes both ways: something on your own
 `:4001` becomes reachable on a peer with `pai-sho expose 4001 --to <key>`, where
-the key comes from `pai-sho key` on the machine you are granting to.
+the key comes from `pai-sho key` on the machine you are granting to. Once that
+peer is admitted, `--to` also takes the name `list` shows for it.
 
 **The network.** With `--tun`, the daemon runs its own TCP/IP stack on a private
 network interface. The daemon sits at `10.99.0.1`, peers get addresses on

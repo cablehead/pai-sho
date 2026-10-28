@@ -130,7 +130,7 @@ pub enum Command {
     Expose {
         /// Local port to grant
         port: u16,
-        /// Peer key(s) to grant the port to
+        /// Peer key(s) or name(s) to grant the port to
         #[arg(long = "to")]
         to: Vec<String>,
         /// Grant to every peer known right now. A peer admitted later gets
@@ -143,7 +143,8 @@ pub enum Command {
     Unexpose {
         /// Local port to revoke
         port: u16,
-        /// Revoke only this peer's grant; defaults to every grant for the port
+        /// Revoke only this peer's grant (key or name); defaults to every
+        /// grant for the port
         #[arg(long = "to")]
         to: Option<String>,
     },
