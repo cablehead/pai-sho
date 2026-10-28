@@ -311,9 +311,9 @@ impl Session {
     }
 
     /// Turn a `--to` argument into the key a grant names. A key is taken as
-    /// is, admitted or not, so a grant can precede admission and a forgotten
-    /// peer's grant can still be revoked. Anything else must be the label of
-    /// exactly one admitted peer: a grant never guesses between two.
+    /// is, admitted or not, so a grant can precede admission. Anything else
+    /// must be the label of exactly one admitted peer: a grant never guesses
+    /// between two.
     pub fn resolve_grantee(&self, peer_ref: &str) -> Result<EndpointId> {
         if let Ok(key) = peer_ref.parse() {
             return Ok(key);
