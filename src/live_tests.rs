@@ -505,6 +505,53 @@ async fn an_unnamed_peer_still_gets_a_name() {
     assert!(b.daemon.peers().resolve_name(&short).await.is_some());
 }
 
+/// `project --as` renames the peer, not only its surface: `list`, `--to` and
+/// the resolver all answer to the new name, and the old one is gone.
+#[tokio::test]
+async fn project_as_renames_the_peer() {
+    let port = echo_server().await;
+    let (a, b) = pair(IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
+    enroll(&a, &b, "b").await;
+
+    a.request(Request::Expose {
+        port,
+        to: vec![b.key()],
+        all: false,
+    })
+    .await;
+    bound_addr(&b, port).await;
+
+    match b
+        .request(Request::Project {
+            peer: "a".into(),
+            ip: None,
+            name: Some("dev".into()),
+        })
+        .await
+    {
+        Response::Ok => {}
+        other => panic!("project failed: {:?}", other),
+    }
+
+    let peers = b.daemon.peers().list().await;
+    let seen = peers.iter().find(|p| p.key == a.key()).unwrap();
+    assert_eq!(seen.name.as_deref(), Some("dev"));
+    assert!(b.daemon.peers().resolve_name("dev").await.is_some());
+    assert!(b.daemon.peers().resolve_name("a").await.is_none());
+
+    match b
+        .request(Request::Expose {
+            port,
+            to: vec!["dev".into()],
+            all: false,
+        })
+        .await
+    {
+        Response::Ok => {}
+        other => panic!("expose --to the new name failed: {:?}", other),
+    }
+}
+
 /// Close the link and wait until a write succeeds again.
 #[tokio::test]
 async fn a_severed_link_comes_back() {
