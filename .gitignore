@@ -3,3 +3,5 @@
 .opencode/
 
 apple/build/
+apple/PaiShoKit/.build/
+apple/PaiShoKit/.swiftpm/

@@ -2,19 +2,48 @@
 {
 	archiveVersion = 1;
 	classes = {};
-	objectVersion = 56;
+	objectVersion = 60;
 	objects = {
+
+/* Begin PBXBuildFile section */
+		A60000000000000000000001 /* PaiShoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* PaiShoApp.swift */; };
+		A60000000000000000000003 /* InAppProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000006 /* InAppProcess.swift */; };
+		A60000000000000000000004 /* PaiShoKit in Frameworks */ = {isa = PBXBuildFile; productRef = B20000000000000000000001 /* PaiShoKit */; };
+		A60000000000000000000005 /* PaiShoUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000008 /* PaiShoUITests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		C10000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A50000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A40000000000000000000001;
+			remoteInfo = PaiSho;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		A10000000000000000000001 /* PaiSho.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PaiSho.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000002 /* PaiShoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaiShoApp.swift; sourceTree = "<group>"; };
-		A10000000000000000000003 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		A10000000000000000000004 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A10000000000000000000005 /* PaiSho-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "PaiSho-Bridging-Header.h"; sourceTree = "<group>"; };
+		A10000000000000000000006 /* InAppProcess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InAppProcess.swift; sourceTree = "<group>"; };
+		A10000000000000000000007 /* PaiShoUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PaiShoUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000008 /* PaiShoUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaiShoUITests.swift; sourceTree = "<group>"; };
+		A10000000000000000000009 /* PaiShoKit */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = PaiShoKit; sourceTree = "<group>"; };
+		A1000000000000000000000A /* build-rust.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "build-rust.sh"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		A20000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A60000000000000000000004 /* PaiShoKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A20000000000000000000004 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -27,7 +56,10 @@
 		A30000000000000000000001 = {
 			isa = PBXGroup;
 			children = (
+				A10000000000000000000009 /* PaiShoKit */,
 				A30000000000000000000002 /* PaiSho */,
+				A30000000000000000000004 /* PaiShoUITests */,
+				A1000000000000000000000A /* build-rust.sh */,
 				A30000000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -36,7 +68,7 @@
 			isa = PBXGroup;
 			children = (
 				A10000000000000000000002 /* PaiShoApp.swift */,
-				A10000000000000000000003 /* ContentView.swift */,
+				A10000000000000000000006 /* InAppProcess.swift */,
 				A10000000000000000000005 /* PaiSho-Bridging-Header.h */,
 				A10000000000000000000004 /* Info.plist */,
 			);
@@ -47,8 +79,17 @@
 			isa = PBXGroup;
 			children = (
 				A10000000000000000000001 /* PaiSho.app */,
+				A10000000000000000000007 /* PaiShoUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		A30000000000000000000004 /* PaiShoUITests */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000008 /* PaiShoUITests.swift */,
+			);
+			path = PaiShoUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -58,6 +99,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = A70000000000000000000003 /* Build configuration list for PBXNativeTarget "PaiSho" */;
 			buildPhases = (
+				A20000000000000000000003 /* Build pai-sho */,
 				A20000000000000000000002 /* Sources */,
 				A20000000000000000000001 /* Frameworks */,
 			);
@@ -66,9 +108,29 @@
 			dependencies = (
 			);
 			name = PaiSho;
+			packageProductDependencies = (
+				B20000000000000000000001 /* PaiShoKit */,
+			);
 			productName = PaiSho;
 			productReference = A10000000000000000000001 /* PaiSho.app */;
 			productType = "com.apple.product-type.application";
+		};
+		A40000000000000000000002 /* PaiShoUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A70000000000000000000004 /* Build configuration list for PBXNativeTarget "PaiShoUITests" */;
+			buildPhases = (
+				A20000000000000000000005 /* Sources */,
+				A20000000000000000000004 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				C20000000000000000000001 /* PBXTargetDependency */,
+			);
+			name = PaiShoUITests;
+			productName = PaiShoUITests;
+			productReference = A10000000000000000000007 /* PaiShoUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 /* End PBXNativeTarget section */
 
@@ -77,10 +139,16 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
 				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					A40000000000000000000002 = {
+						TestTargetID = A40000000000000000000001;
+					};
+				};
 			};
 			buildConfigurationList = A70000000000000000000001 /* Build configuration list for PBXProject "PaiSho" */;
-			compatibilityVersion = "Xcode 14.0";
+			compatibilityVersion = "Xcode 15.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -88,14 +156,40 @@
 				Base,
 			);
 			mainGroup = A30000000000000000000001;
+			packageReferences = (
+				B10000000000000000000001 /* XCLocalSwiftPackageReference "PaiShoKit" */,
+			);
 			productRefGroup = A30000000000000000000003 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
 				A40000000000000000000001 /* PaiSho */,
+				A40000000000000000000002 /* PaiShoUITests */,
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A20000000000000000000003 /* Build pai-sho */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build pai-sho";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$PROJECT_DIR/build-rust.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		A20000000000000000000002 /* Sources */ = {
@@ -103,27 +197,44 @@
 			buildActionMask = 2147483647;
 			files = (
 				A60000000000000000000001 /* PaiShoApp.swift in Sources */,
-				A60000000000000000000002 /* ContentView.swift in Sources */,
+				A60000000000000000000003 /* InAppProcess.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A20000000000000000000005 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A60000000000000000000005 /* PaiShoUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
-/* Begin PBXBuildFile section */
-		A60000000000000000000001 /* PaiShoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* PaiShoApp.swift */; };
-		A60000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000003 /* ContentView.swift */; };
-/* End PBXBuildFile section */
+/* Begin PBXTargetDependency section */
+		C20000000000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A40000000000000000000001 /* PaiSho */;
+			targetProxy = C10000000000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		A80000000000000000000001 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
 				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				"CODE_SIGN_IDENTITY[sdk=iphonesimulator*]" = "-";
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				IPHONEOS_DEPLOYMENT_TARGET = 27.2;
+				ENABLE_TESTABILITY = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
 			};
 			name = Debug;
@@ -132,10 +243,13 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
 				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				"CODE_SIGN_IDENTITY[sdk=iphonesimulator*]" = "-";
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				IPHONEOS_DEPLOYMENT_TARGET = 27.2;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.0;
 			};
@@ -144,18 +258,15 @@
 		A80000000000000000000003 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGNING_ALLOWED = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PaiSho/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 27.2;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				OTHER_LDFLAGS = (
-					"-force_load",
-					"$(PROJECT_DIR)/../target/aarch64-apple-ios/debug/libpai_sho.a",
-					"$(TOOLCHAIN_DIR)/usr/lib/clang/21/lib/darwin/libclang_rt.ios.a",
+					"$(PROJECT_DIR)/../target/$(PAI_SHO_RUST_TARGET)/debug/libpai_sho.a",
 					"-framework",
 					Security,
 					"-framework",
@@ -167,11 +278,12 @@
 					"-lc++",
 					"-lresolv",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = stream.cross.pai-sho;
+				"PAI_SHO_RUST_TARGET[sdk=iphoneos*]" = "aarch64-apple-ios";
+				"PAI_SHO_RUST_TARGET[sdk=iphonesimulator*]" = "aarch64-apple-ios-sim";
+				PRODUCT_BUNDLE_IDENTIFIER = "stream.cross.pai-sho";
 				PRODUCT_NAME = PaiSho;
-				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_OBJC_BRIDGING_HEADER = "PaiSho/PaiSho-Bridging-Header.h";
-				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
@@ -179,18 +291,15 @@
 		A80000000000000000000004 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGNING_ALLOWED = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PaiSho/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 27.2;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				OTHER_LDFLAGS = (
-					"-force_load",
-					"$(PROJECT_DIR)/../target/aarch64-apple-ios/release/libpai_sho.a",
-					"$(TOOLCHAIN_DIR)/usr/lib/clang/21/lib/darwin/libclang_rt.ios.a",
+					"$(PROJECT_DIR)/../target/$(PAI_SHO_RUST_TARGET)/release/libpai_sho.a",
 					"-framework",
 					Security,
 					"-framework",
@@ -202,12 +311,37 @@
 					"-lc++",
 					"-lresolv",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = stream.cross.pai-sho;
+				"PAI_SHO_RUST_TARGET[sdk=iphoneos*]" = "aarch64-apple-ios";
+				"PAI_SHO_RUST_TARGET[sdk=iphonesimulator*]" = "aarch64-apple-ios-sim";
+				PRODUCT_BUNDLE_IDENTIFIER = "stream.cross.pai-sho";
 				PRODUCT_NAME = PaiSho;
-				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_OBJC_BRIDGING_HEADER = "PaiSho/PaiSho-Bridging-Header.h";
-				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		A80000000000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = "stream.cross.pai-sho.uitests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = PaiSho;
+			};
+			name = Debug;
+		};
+		A80000000000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = "stream.cross.pai-sho.uitests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = PaiSho;
 			};
 			name = Release;
 		};
@@ -232,7 +366,30 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
+		A70000000000000000000004 /* Build configuration list for PBXNativeTarget "PaiShoUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A80000000000000000000005 /* Debug */,
+				A80000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		B10000000000000000000001 /* XCLocalSwiftPackageReference "PaiShoKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = PaiShoKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		B20000000000000000000001 /* PaiShoKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = PaiShoKit;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A50000000000000000000001 /* Project object */;
 }
