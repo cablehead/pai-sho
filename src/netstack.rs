@@ -217,6 +217,14 @@ fn open_tun(_name: &str) -> Result<RawFd> {
     Ok(fd)
 }
 
+/// iOS has no utun the process can open. The phone app does not bring up a tun.
+/// `spawn` fails here until a userspace path exists that does not need one.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn open_tun(name: &str) -> Result<RawFd> {
+    anyhow::bail!("tun {name} is not available on this OS")
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn set_nonblocking(fd: RawFd) {
     let fl = unsafe { libc::fcntl(fd, libc::F_GETFL) };
     unsafe { libc::fcntl(fd, libc::F_SETFL, fl | libc::O_NONBLOCK) };
@@ -291,6 +299,7 @@ fn run(cmd: &str, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn errno() -> i32 {
     io::Error::last_os_error().raw_os_error().unwrap_or(0)
 }
