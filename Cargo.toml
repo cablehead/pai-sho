@@ -8,6 +8,10 @@ repository = "https://github.com/cablehead/pai-sho"
 keywords = ["iroh", "quic", "p2p", "port-forwarding", "nat-traversal"]
 categories = ["network-programming", "command-line-utilities"]
 
+[lib]
+name = "pai_sho"
+path = "src/lib.rs"
+
 [dependencies]
 # Networking
 iroh = "1"
