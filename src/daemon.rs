@@ -14,7 +14,17 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
+use tokio::sync::Notify;
 use tracing::{error, info, warn};
+
+/// One permit. `pai_sho_stop` stores it, and `run` waits on it beside the
+/// process signals. A stop that arrives before `run` reaches the wait still
+/// lands, because `notify_one` keeps the permit.
+static SHUTDOWN: Notify = Notify::const_new();
+
+pub fn request_shutdown() {
+    SHUTDOWN.notify_one();
+}
 
 pub struct Daemon {
     /// The iroh endpoint
@@ -547,12 +557,16 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {}
         _ = sigterm.recv() => {}
+        _ = SHUTDOWN.notified() => {}
     }
 }
 
 #[cfg(not(unix))]
 async fn shutdown_signal() {
-    let _ = tokio::signal::ctrl_c().await;
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = SHUTDOWN.notified() => {}
+    }
 }
 
 async fn handle_client(stream: UnixStream, daemon: Arc<Daemon>) -> Result<()> {
