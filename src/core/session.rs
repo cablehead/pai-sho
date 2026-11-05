@@ -341,6 +341,23 @@ impl Session {
         self.peers.get(peer).and_then(|p| p.label.clone())
     }
 
+    /// Rename an admitted peer, as `project --as` does. The new name replaces
+    /// the one `--as` gave at enrollment everywhere a name is looked up, and
+    /// is pinned so a restart keeps it. A key we have not admitted is left
+    /// alone.
+    pub fn rename(&mut self, key: &EndpointId, name: String) -> Vec<Action> {
+        match self.peers.get_mut(key) {
+            Some(p) => {
+                p.label = Some(name.clone());
+                vec![Action::PersistPin {
+                    key: *key,
+                    label: Some(name),
+                }]
+            }
+            None => Vec::new(),
+        }
+    }
+
     /// Mint a one-time code. `ports` are granted to whoever claims it, so a
     /// grant still names exactly one key: the key is filled in on claim.
     pub fn mint_token(&self, name: Option<String>, ports: Vec<u16>) -> String {
@@ -448,6 +465,30 @@ mod tests {
         let mut s = session_with(key(1));
         s.admit_known(key(2), Some("peer".into()), Admission::Added);
         assert!(s.resolve_grantee("peer").is_err());
+    }
+
+    #[test]
+    fn a_renamed_peer_answers_to_its_new_name() {
+        let a = key(1);
+        let mut s = session_with(a);
+        let actions = s.rename(&a, "dev".into());
+        assert_eq!(
+            actions,
+            vec![Action::PersistPin {
+                key: a,
+                label: Some("dev".into())
+            }]
+        );
+        assert_eq!(s.label_of(&a), Some("dev".into()));
+        assert_eq!(s.resolve_grantee("dev").unwrap(), a);
+        assert!(s.resolve_grantee("peer").is_err());
+    }
+
+    #[test]
+    fn renaming_an_unknown_key_does_nothing() {
+        let mut s = Session::new();
+        assert!(s.rename(&key(1), "dev".into()).is_empty());
+        assert_eq!(s.label_of(&key(1)), None);
     }
 
     // -- announcement ------------------------------------------------------

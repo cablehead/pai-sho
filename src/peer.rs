@@ -38,8 +38,9 @@ const BIND_RETRY_DELAY: Duration = Duration::from_millis(200);
 /// Info about a connected peer
 struct Peer {
     endpoint_id: EndpointId,
-    /// What we call this peer, from `--as` (None until something names it)
-    label: Option<String>,
+    /// What we call this peer, from `--as` (None until something names it).
+    /// `project --as` replaces it, so it sits behind a lock.
+    label: std::sync::RwLock<Option<String>>,
     /// We dial this peer. False only while we are the inviter and they have
     /// not called home yet.
     dial: AtomicBool,
@@ -65,6 +66,10 @@ struct Peer {
 }
 
 impl Peer {
+    fn label(&self) -> Option<String> {
+        self.label.read().unwrap().clone()
+    }
+
     fn new(
         endpoint_id: EndpointId,
         label: Option<String>,
@@ -74,7 +79,7 @@ impl Peer {
     ) -> Arc<Self> {
         Arc::new(Self {
             endpoint_id,
-            label,
+            label: std::sync::RwLock::new(label),
             dial: AtomicBool::new(dial),
             enroll_token,
             connection: RwLock::new(connection),
@@ -511,8 +516,7 @@ impl PeerManager {
         // Every surface answers by name. Nothing named this peer, so it gets
         // a short form of its key until `project --as` renames it.
         let name = Some(
-            peer.label
-                .clone()
+            peer.label()
                 .unwrap_or_else(|| crate::core::session::default_name(&peer.endpoint_id)),
         );
         if let Err(e) = self.claim_addr(ip, name.clone()) {
@@ -938,7 +942,7 @@ impl PeerManager {
                 .unwrap_or("unknown");
             result.push(PeerInfo {
                 key: peer.endpoint_id.to_string(),
-                name: peer.label.clone(),
+                name: peer.label(),
                 online,
                 admission: admission.to_string(),
                 they_expose: peer.exposed_ports.read().await.clone(),
@@ -960,7 +964,7 @@ impl PeerManager {
         }
         self.peers
             .iter()
-            .find(|e| e.value().label.as_deref() == Some(peer_ref))
+            .find(|e| e.value().label().as_deref() == Some(peer_ref))
             .map(|e| *e.key())
     }
 
@@ -1040,9 +1044,15 @@ impl PeerManager {
             let _ = self.unclaim_addr(old.ip);
         }
 
-        // Default the name to the peer's label so `project` without --as still
-        // yields a resolvable handle.
-        let name = name.or_else(|| peer.label.clone());
+        // An explicit --as renames the peer, not just its surface, so `list`,
+        // `--to` and the resolver all go by the new name. Without --as the
+        // surface takes the peer's current label, so it still has a handle.
+        if let Some(name) = &name {
+            *peer.label.write().unwrap() = Some(name.clone());
+            let actions = self.session.lock().unwrap().rename(&id, name.clone());
+            self.apply(&peer, actions).await;
+        }
+        let name = name.or_else(|| peer.label());
         let ip = match ip {
             Some(ip) => ip,
             None => {
