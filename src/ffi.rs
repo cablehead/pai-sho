@@ -87,3 +87,9 @@ pub extern "C" fn pai_sho_start(
 pub extern "C" fn pai_sho_stop() {
     crate::daemon::request_shutdown();
 }
+
+/// 1 while a process started by `pai_sho_start` is running, else 0.
+#[no_mangle]
+pub extern "C" fn pai_sho_running() -> c_int {
+    RUNNING.load(Ordering::SeqCst) as c_int
+}

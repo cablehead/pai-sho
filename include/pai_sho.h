@@ -14,3 +14,6 @@ int32_t pai_sho_start(const char *host, const char *socket_path, const char *key
 
 /* Asks that process to stop. */
 void pai_sho_stop(void);
+
+/* 1 while a process started by pai_sho_start is running, else 0. */
+int32_t pai_sho_running(void);
