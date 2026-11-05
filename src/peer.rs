@@ -10,7 +10,7 @@ use crate::core::dial::{self, Keep};
 use crate::core::session::{Action, Admission, ConnId, Refusal, Session};
 use crate::enroll::Pins;
 use crate::netstack::{Accept, NetStack};
-use crate::protocol::{PeerInfo, PeerMessage, ALPN};
+use crate::protocol::{BoundAt, PeerInfo, PeerMessage, ALPN};
 use crate::surface::{self, Surface, SurfaceStore};
 use crate::tunnel::{self, PeerConnection};
 use anyhow::{anyhow, Context, Result};
@@ -56,12 +56,20 @@ struct Peer {
     /// Where this peer's ports are bound locally. None until projected: an
     /// unprojected peer's ports are known but have no listener.
     surface: RwLock<Option<Surface>>,
-    /// Active bindings (local port -> task handle)
-    bindings: DashMap<u16, tokio::task::JoinHandle<()>>,
+    /// Active bindings, by the peer's port
+    bindings: DashMap<u16, Binding>,
     /// Notified when a new connection replaces the current one
     conn_notify: Notify,
     /// Set when peer is removed; signals connection loop to exit
     removed: AtomicBool,
+}
+
+/// A listener for one of a peer's ports.
+struct Binding {
+    task: tokio::task::JoinHandle<()>,
+    /// Where it listens. The port differs from the peer's when this daemon
+    /// binds every peer at 127.0.0.1 and the peer's port number was taken.
+    at: SocketAddr,
 }
 
 impl Peer {
@@ -113,6 +121,11 @@ pub struct PeerManager {
     /// Serializes binding creation/teardown and surface changes so a port's
     /// listener state and the address it binds move together
     bind_lock: Mutex<()>,
+    /// Bind every peer at 127.0.0.1 instead of a surface address of its own.
+    /// Each of a peer's ports then listens on that port number if it is free,
+    /// else on one the OS picks. True on iOS, where an app can add no address
+    /// and can bind only 127.0.0.1.
+    localhost_only: AtomicBool,
 }
 
 impl PeerManager {
@@ -137,7 +150,29 @@ impl PeerManager {
             netstack,
             self_name,
             bind_lock: Mutex::new(()),
+            localhost_only: AtomicBool::new(cfg!(target_os = "ios")),
         }
+    }
+
+    /// Bind every peer at 127.0.0.1, as on iOS. Lets the tests on other
+    /// systems take that path.
+    #[cfg(test)]
+    pub fn bind_at_localhost(&self) {
+        self.localhost_only.store(true, Ordering::SeqCst);
+    }
+
+    fn is_localhost_only(&self) -> bool {
+        self.localhost_only.load(Ordering::SeqCst)
+    }
+
+    /// An address for a new surface. Allocated from the backend's range, or
+    /// 127.0.0.1 when every peer shares it.
+    async fn new_surface_ip(&self) -> Result<IpAddr> {
+        if self.is_localhost_only() {
+            return Ok(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+        }
+        let taken = self.projected_ips().await;
+        surface::allocate(&taken, self.surface_base())
     }
 
     /// Take up an invitation, or reach a peer known by key. We dial this peer
@@ -500,8 +535,7 @@ impl PeerManager {
             return None;
         }
 
-        let taken = self.projected_ips().await;
-        let ip = match surface::allocate(&taken, self.surface_base()) {
+        let ip = match self.new_surface_ip().await {
             Ok(ip) => ip,
             Err(e) => {
                 error!("cannot auto-project {}: {}", peer.endpoint_id, e);
@@ -546,8 +580,13 @@ impl PeerManager {
         if let Some(ns) = &self.netstack {
             if let IpAddr::V4(v4) = ip {
                 ns.listen(v4, port);
-                peer.bindings
-                    .insert(port, tokio::spawn(std::future::pending::<()>()));
+                peer.bindings.insert(
+                    port,
+                    Binding {
+                        task: tokio::spawn(std::future::pending::<()>()),
+                        at: SocketAddr::from((v4, port)),
+                    },
+                );
                 info!("bound {}:{} (tun)", v4, port);
                 return;
             }
@@ -559,16 +598,23 @@ impl PeerManager {
             if attempt > 0 {
                 tokio::time::sleep(BIND_RETRY_DELAY).await;
             }
-            match tunnel::bind_listener(addr).await {
+            let mut bound = tunnel::bind_listener(addr).await;
+            // Every peer shares 127.0.0.1 here, so two peers can announce the
+            // same port. The second one listens wherever the OS puts it.
+            if bound.is_err() && self.is_localhost_only() {
+                bound = tunnel::bind_listener(SocketAddr::from((ip, 0))).await;
+            }
+            match bound {
                 Ok(listener) => {
+                    let at = listener.local_addr().unwrap_or(addr);
                     let peer_clone = peer.clone();
-                    let handle = tokio::spawn(async move {
+                    let task = tokio::spawn(async move {
                         if let Err(e) = tunnel::serve_listener(listener, port, &peer_clone).await {
-                            error!("serving {} failed: {}", addr, e);
+                            error!("serving {} failed: {}", at, e);
                         }
                     });
-                    peer.bindings.insert(port, handle);
-                    info!("bound {}", addr);
+                    peer.bindings.insert(port, Binding { task, at });
+                    info!("bound {} for port {}", at, port);
                     return;
                 }
                 Err(e) => last_err = Some(e),
@@ -586,9 +632,9 @@ impl PeerManager {
     /// actually dropped before the port is reused. On the TUN backend, also
     /// tells the stack to stop listening (reads the peer's surface for the ip).
     async fn release_binding(&self, peer: &Arc<Peer>, port: u16) {
-        if let Some((_, handle)) = peer.bindings.remove(&port) {
-            handle.abort();
-            let _ = handle.await;
+        if let Some((_, binding)) = peer.bindings.remove(&port) {
+            binding.task.abort();
+            let _ = binding.task.await;
             info!("removed binding for port {}", port);
         }
         if let Some(ns) = &self.netstack {
@@ -927,8 +973,16 @@ impl PeerManager {
                     .unwrap_or(false)
             };
             let surface = peer.surface.read().await.clone();
-            let mut bound: Vec<u16> = peer.bindings.iter().map(|e| *e.key()).collect();
-            bound.sort_unstable();
+            let mut bound_at: Vec<BoundAt> = peer
+                .bindings
+                .iter()
+                .map(|e| BoundAt {
+                    port: *e.key(),
+                    at: e.value().at.to_string(),
+                })
+                .collect();
+            bound_at.sort_unstable_by_key(|b| b.port);
+            let bound: Vec<u16> = bound_at.iter().map(|b| b.port).collect();
             let admission = self
                 .session
                 .lock()
@@ -945,6 +999,7 @@ impl PeerManager {
                 version: peer.version.read().await.clone(),
                 ip: surface.as_ref().map(|s| s.ip.to_string()),
                 bound,
+                bound_at,
             });
         }
         result
@@ -1045,10 +1100,7 @@ impl PeerManager {
         let name = name.or_else(|| peer.label.clone());
         let ip = match ip {
             Some(ip) => ip,
-            None => {
-                let taken = self.projected_ips().await;
-                surface::allocate(&taken, self.surface_base())?
-            }
+            None => self.new_surface_ip().await?,
         };
 
         self.claim_addr(ip, name.clone())?;

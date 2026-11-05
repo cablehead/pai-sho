@@ -189,8 +189,8 @@ async fn bound_addr(b: &TestDaemon, port: u16) -> SocketAddr {
     until(20, || async {
         let peers = b.daemon.peers().list().await;
         let p = peers.iter().find(|p| p.bound.contains(&port))?;
-        let ip: IpAddr = p.ip.as_ref()?.parse().ok()?;
-        Some(SocketAddr::from((ip, port)))
+        let at = p.bound_at.iter().find(|b| b.port == port)?;
+        at.at.parse().ok()
     })
     .await
 }
@@ -503,6 +503,60 @@ async fn an_unnamed_peer_still_gets_a_name() {
     // The surface is still reachable by name: a short form of the key.
     let short: String = a.key().chars().take(8).collect();
     assert!(b.daemon.peers().resolve_name(&short).await.is_some());
+}
+
+#[tokio::test]
+async fn at_localhost_a_taken_port_listens_elsewhere() {
+    // The echo server holds 127.0.0.1:port, so b, binding every peer at
+    // 127.0.0.1 as on iOS, cannot have that port and takes another.
+    let port = echo_server().await;
+    let (a, b) = pair(IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
+    b.daemon.peers().bind_at_localhost();
+    enroll(&a, &b, "b").await;
+
+    a.request(Request::Expose {
+        port,
+        to: vec![b.key()],
+        all: false,
+    })
+    .await;
+
+    let addr = bound_addr(&b, port).await;
+    assert_eq!(addr.ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
+    assert_ne!(addr.port(), port);
+
+    let peers = b.daemon.peers().list().await;
+    assert_eq!(peers[0].ip.as_deref(), Some("127.0.0.1"));
+    assert_eq!(peers[0].bound, vec![port]);
+
+    let mut sock = TcpStream::connect(addr).await.unwrap();
+    sock.write_all(b"elsewhere").await.unwrap();
+    let mut buf = [0u8; 9];
+    sock.read_exact(&mut buf).await.unwrap();
+    assert_eq!(&buf, b"elsewhere");
+}
+
+#[tokio::test]
+async fn at_localhost_a_free_port_keeps_its_number() {
+    // a forwards to 127.0.0.2, so 127.0.0.1:port is free on b's side. Nothing
+    // answers on 127.0.0.2; this only checks where b listens.
+    let port = {
+        let probe = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        probe.local_addr().unwrap().port()
+    };
+    let (a, b) = pair(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2))).await;
+    b.daemon.peers().bind_at_localhost();
+    enroll(&a, &b, "b").await;
+
+    a.request(Request::Expose {
+        port,
+        to: vec![b.key()],
+        all: false,
+    })
+    .await;
+
+    let addr = bound_addr(&b, port).await;
+    assert_eq!(addr, SocketAddr::from((Ipv4Addr::LOCALHOST, port)));
 }
 
 /// Close the link and wait until a write succeeds again.

@@ -113,6 +113,20 @@ pub struct PeerInfo {
     pub ip: Option<String>,
     /// Ports bound under that address
     pub bound: Vec<u16>,
+    /// Where each bound port listens. Usually `ip` and the same port. When the
+    /// daemon binds every peer at 127.0.0.1 (iOS), the port can differ.
+    /// Empty from a daemon older than this field.
+    #[serde(default)]
+    pub bound_at: Vec<BoundAt>,
+}
+
+/// One of a peer's ports and the local address it is reachable at.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BoundAt {
+    /// The peer's port
+    pub port: u16,
+    /// The local `ip:port` to connect to
+    pub at: String,
 }
 
 // ============================================================================
@@ -182,6 +196,17 @@ mod tests {
         match old {
             OldMessage::Enroll(e) => assert_eq!(e.token, "abc"),
         }
+    }
+
+    #[test]
+    fn an_old_peer_row_has_no_bound_at() {
+        let peer: PeerInfo = serde_json::from_str(
+            r#"{"key":"k","name":null,"online":true,"admission":"code",
+                "they_expose":[80],"ip":"127.0.1.2","bound":[80]}"#,
+        )
+        .unwrap();
+        assert_eq!(peer.bound, vec![80]);
+        assert!(peer.bound_at.is_empty());
     }
 
     #[test]
