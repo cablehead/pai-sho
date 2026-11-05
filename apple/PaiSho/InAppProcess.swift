@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 import Observation
 
@@ -58,3 +59,4 @@ final class InAppProcess {
         if running { problem = "Still stopping" }
     }
 }
+#endif

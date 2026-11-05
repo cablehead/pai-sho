@@ -8,6 +8,7 @@
 /* Begin PBXBuildFile section */
 		A60000000000000000000001 /* PaiShoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* PaiShoApp.swift */; };
 		A60000000000000000000003 /* InAppProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000006 /* InAppProcess.swift */; };
+		A60000000000000000000006 /* LaunchCheck.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000C /* LaunchCheck.swift */; };
 		A60000000000000000000004 /* PaiShoKit in Frameworks */ = {isa = PBXBuildFile; productRef = B20000000000000000000001 /* PaiShoKit */; };
 		A60000000000000000000005 /* PaiShoUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000008 /* PaiShoUITests.swift */; };
 /* End PBXBuildFile section */
@@ -31,6 +32,8 @@
 		A10000000000000000000007 /* PaiShoUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PaiShoUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000008 /* PaiShoUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaiShoUITests.swift; sourceTree = "<group>"; };
 		A10000000000000000000009 /* PaiShoKit */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = PaiShoKit; sourceTree = "<group>"; };
+		A1000000000000000000000B /* Info-macOS.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Info-macOS.plist"; sourceTree = "<group>"; };
+		A1000000000000000000000C /* LaunchCheck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchCheck.swift; sourceTree = "<group>"; };
 		A1000000000000000000000A /* build-rust.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "build-rust.sh"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -59,7 +62,7 @@
 				A10000000000000000000009 /* PaiShoKit */,
 				A30000000000000000000002 /* PaiSho */,
 				A30000000000000000000004 /* PaiShoUITests */,
-				A1000000000000000000000A /* build-rust.sh */,
+		A1000000000000000000000A /* build-rust.sh */,
 				A30000000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -69,8 +72,10 @@
 			children = (
 				A10000000000000000000002 /* PaiShoApp.swift */,
 				A10000000000000000000006 /* InAppProcess.swift */,
+				A1000000000000000000000C /* LaunchCheck.swift */,
 				A10000000000000000000005 /* PaiSho-Bridging-Header.h */,
 				A10000000000000000000004 /* Info.plist */,
+				A1000000000000000000000B /* Info-macOS.plist */,
 			);
 			path = PaiSho;
 			sourceTree = "<group>";
@@ -198,6 +203,7 @@
 			files = (
 				A60000000000000000000001 /* PaiShoApp.swift in Sources */,
 				A60000000000000000000003 /* InAppProcess.swift in Sources */,
+				A60000000000000000000006 /* LaunchCheck.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -228,12 +234,14 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
 				"CODE_SIGN_IDENTITY[sdk=iphonesimulator*]" = "-";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_TESTABILITY = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
 			};
@@ -247,6 +255,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
 				"CODE_SIGN_IDENTITY[sdk=iphonesimulator*]" = "-";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -261,11 +270,17 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PaiSho/Info.plist;
+				"INFOPLIST_FILE[sdk=macosx*]" = "PaiSho/Info-macOS.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				OTHER_LDFLAGS = (
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				"OTHER_LDFLAGS[sdk=iphone*]" = (
 					"$(PROJECT_DIR)/../target/$(PAI_SHO_RUST_TARGET)/debug/libpai_sho.a",
 					"-framework",
 					Security,
@@ -282,7 +297,9 @@
 				"PAI_SHO_RUST_TARGET[sdk=iphonesimulator*]" = "aarch64-apple-ios-sim";
 				PRODUCT_BUNDLE_IDENTIFIER = "stream.cross.pai-sho";
 				PRODUCT_NAME = PaiSho;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
 				SWIFT_OBJC_BRIDGING_HEADER = "PaiSho/PaiSho-Bridging-Header.h";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -294,11 +311,17 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PaiSho/Info.plist;
+				"INFOPLIST_FILE[sdk=macosx*]" = "PaiSho/Info-macOS.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				OTHER_LDFLAGS = (
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				"OTHER_LDFLAGS[sdk=iphone*]" = (
 					"$(PROJECT_DIR)/../target/$(PAI_SHO_RUST_TARGET)/release/libpai_sho.a",
 					"-framework",
 					Security,
@@ -315,7 +338,9 @@
 				"PAI_SHO_RUST_TARGET[sdk=iphonesimulator*]" = "aarch64-apple-ios-sim";
 				PRODUCT_BUNDLE_IDENTIFIER = "stream.cross.pai-sho";
 				PRODUCT_NAME = PaiSho;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
 				SWIFT_OBJC_BRIDGING_HEADER = "PaiSho/PaiSho-Bridging-Header.h";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};

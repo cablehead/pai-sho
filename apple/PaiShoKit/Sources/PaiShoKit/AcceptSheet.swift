@@ -20,7 +20,8 @@ struct AcceptSheet: View {
         NavigationStack {
             Form {
                 Section("Invitation") {
-                    TextField("Paste an invitation", text: $invite, axis: .vertical)
+                    TextField("Invitation", text: $invite, prompt: Text("Paste an invitation"), axis: .vertical)
+                        .labelsHidden()
                         .font(.body.monospaced())
                         .lineLimit(3...6)
                         .autocorrectionDisabled()
@@ -30,7 +31,8 @@ struct AcceptSheet: View {
                         .accessibilityIdentifier("invite")
                 }
                 Section("Name") {
-                    TextField("What to call this peer", text: $name)
+                    TextField("Name", text: $name, prompt: Text("What to call this peer"))
+                        .labelsHidden()
                         .autocorrectionDisabled()
                         #if os(iOS)
                         .textInputAutocapitalization(.never)

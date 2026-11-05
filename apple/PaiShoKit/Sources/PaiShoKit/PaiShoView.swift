@@ -8,6 +8,8 @@ public struct PaiShoView<Controls: View>: View {
     let controls: Controls
     @State private var selection: PortID?
     @State private var sheet: Sheet?
+    @State private var open: UInt16?
+    @State private var invite: String?
 
     enum Sheet: Identifiable {
         case scan
@@ -22,11 +24,18 @@ public struct PaiShoView<Controls: View>: View {
     }
 
     /// `invite`, when given, opens the add-a-peer sheet with it filled in, as
-    /// Paste would.
-    public init(store: PeerStore, invite: String? = nil, @ViewBuilder controls: () -> Controls) {
+    /// Paste would. `open`, when given, opens the first port with that number
+    /// once a peer lists it.
+    public init(
+        store: PeerStore,
+        invite: String? = nil,
+        open: UInt16? = nil,
+        @ViewBuilder controls: () -> Controls
+    ) {
         self.store = store
         self.controls = controls()
-        _sheet = State(initialValue: invite.map { .accept($0) })
+        _invite = State(initialValue: invite)
+        _open = State(initialValue: open)
     }
 
     public var body: some View {
@@ -79,7 +88,20 @@ public struct PaiShoView<Controls: View>: View {
             }
         }
         .task { await store.watch() }
+        .task {
+            // On macOS a sheet presented while the window is still coming up
+            // is sometimes dropped, so give the window a moment first.
+            guard let invite else { return }
+            self.invite = nil
+            try? await Task.sleep(for: .milliseconds(500))
+            sheet = .accept(invite)
+        }
         .onChange(of: store.peers) {
+            if let port = open,
+               let peer = store.peers.first(where: { $0.ports.contains(port) && $0.address(port: port) != nil }) {
+                open = nil
+                selection = PortID(peer: peer.key, port: port)
+            }
             if let selection, store.peer(selection.peer)?.ports.contains(selection.port) != true {
                 self.selection = nil
             }
@@ -88,8 +110,8 @@ public struct PaiShoView<Controls: View>: View {
 }
 
 extension PaiShoView where Controls == EmptyView {
-    public init(store: PeerStore, invite: String? = nil) {
-        self.init(store: store, invite: invite) { EmptyView() }
+    public init(store: PeerStore, invite: String? = nil, open: UInt16? = nil) {
+        self.init(store: store, invite: invite, open: open) { EmptyView() }
     }
 }
 

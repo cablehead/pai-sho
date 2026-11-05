@@ -4,6 +4,12 @@
 # OTHER_LDFLAGS link it from.
 set -eu
 
+# The Mac app talks to the daemon already running on the Mac, so there is
+# nothing to link.
+if [ "$PLATFORM_NAME" = "macosx" ]; then
+    exit 0
+fi
+
 export PATH="$HOME/.cargo/bin:$PATH"
 
 # Xcode exports SDKROOT for the iOS SDK. Cargo also compiles build scripts for
