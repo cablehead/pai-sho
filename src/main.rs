@@ -147,10 +147,16 @@ mod cli_tests {
     fn invite_needs_nothing() {
         let cli = parse(&["pai-sho", "invite"]).unwrap();
         match cli.command {
-            Command::Invite { key, name, expose } => {
+            Command::Invite {
+                key,
+                name,
+                expose,
+                qr,
+            } => {
                 assert!(key.is_none());
                 assert!(name.is_none());
                 assert!(expose.is_empty());
+                assert!(!qr);
             }
             _ => panic!("wrong command"),
         }
@@ -169,11 +175,22 @@ mod cli_tests {
         ])
         .unwrap();
         match cli.command {
-            Command::Invite { key, name, expose } => {
+            Command::Invite {
+                key, name, expose, ..
+            } => {
                 assert_eq!(key, Some("abc".to_string()));
                 assert_eq!(name, Some("rustdev".to_string()));
                 assert_eq!(expose, vec![3001, 7331]);
             }
+            _ => panic!("wrong command"),
+        }
+    }
+
+    #[test]
+    fn invite_can_draw_a_qr_code() {
+        let cli = parse(&["pai-sho", "invite", "--qr"]).unwrap();
+        match cli.command {
+            Command::Invite { qr, .. } => assert!(qr),
             _ => panic!("wrong command"),
         }
     }

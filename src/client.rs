@@ -8,8 +8,11 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 pub async fn send_command(socket_path: &Path, command: Command) -> Result<()> {
+    let qr = matches!(command, Command::Invite { qr: true, .. });
     let request = match command {
-        Command::Invite { key, name, expose } => Request::Invite { key, name, expose },
+        Command::Invite {
+            key, name, expose, ..
+        } => Request::Invite { key, name, expose },
         Command::Accept { handle, name } => Request::Accept { handle, name },
         Command::Forget { peer } => Request::Forget { peer },
         Command::Expose { port, to, all } => Request::Expose { port, to, all },
@@ -46,7 +49,12 @@ pub async fn send_command(socket_path: &Path, command: Command) -> Result<()> {
     match response {
         Response::Ok => println!("OK"),
         Response::Key(key) => println!("{}", key),
-        Response::Invite(invite) => println!("{}", invite),
+        Response::Invite(invite) => {
+            if qr {
+                print!("{}", crate::qr::render(&invite)?);
+            }
+            println!("{}", invite);
+        }
         Response::List(mut info) => {
             info.cli = VERSION.to_string();
             println!("{}", serde_json::to_string_pretty(&info)?);

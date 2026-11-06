@@ -72,6 +72,10 @@ pub enum Command {
         /// Port(s) to grant along with the invitation (repeat or comma-separate)
         #[arg(long = "expose", value_delimiter = ',')]
         expose: Vec<u16>,
+        /// Also draw the invitation as a QR code, for a phone to scan off the
+        /// screen. Drawn for a dark terminal
+        #[arg(long)]
+        qr: bool,
     },
 
     /// Take up an invitation, or reach a peer you already know by key

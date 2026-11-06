@@ -35,7 +35,9 @@ pai-sho invite --expose 8080
 # 5hc4bjqfp6...7fd25613dd...   one-time, valid 5 minutes
 ```
 
-Paste the invitation on your laptop, and give the box a name:
+With `--qr` it also draws the invitation as a QR code, for the iOS app to
+scan off the screen. Paste the invitation on your laptop, and give the box a
+name:
 
 ```sh
 # laptop
@@ -191,7 +193,7 @@ pai-sho [--socket <path>] <command>
 | `daemon remove` | macOS: unload the launchd service and delete its files |
 | `daemon status` | macOS: print the launchd service state as JSON |
 | `key` | Print this daemon's key (hand this to a peer) |
-| `invite [<key>] [--as <name>] [--expose <port>...]` | Extend an invitation. With a key, to that key alone (host-attested, no secret). Without one, print a one-time invitation valid 5 minutes. |
+| `invite [<key>] [--as <name>] [--expose <port>...] [--qr]` | Extend an invitation. With a key, to that key alone (host-attested, no secret). Without one, print a one-time invitation valid 5 minutes; `--qr` also draws it as a QR code. |
 | `accept <invite\|key> [--as <name>]` | Take up an invitation, or reach a peer by key |
 | `forget <peer>` | Forget a peer: close it, unbind its ports, revoke its grants |
 | `expose <port> (--to <key> \| --all)` | Grant a local port to named peers. Nothing is reachable without a grant |

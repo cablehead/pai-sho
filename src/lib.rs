@@ -14,6 +14,7 @@ mod live_tests;
 pub mod netstack;
 pub mod peer;
 pub mod protocol;
+pub mod qr;
 pub mod resolver;
 pub mod surface;
 pub mod tunnel;

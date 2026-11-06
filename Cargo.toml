@@ -42,7 +42,11 @@ libc = "0.2"
 
 # Misc
 rand = "0.9"
+qrcode = { version = "0.14.1", default-features = false }
 
 [profile.release]
 lto = true
 strip = true
+
+[dev-dependencies]
+rqrr = { version = "0.11.0", default-features = false }
