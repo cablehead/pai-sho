@@ -62,8 +62,8 @@ final class ScannerController: NSObject, AVCaptureMetadataOutputObjectsDelegate 
     private var onMessage: (@MainActor (String) -> Void)?
     private var onCode: (@MainActor (String) -> Void)?
 
-    static let noCamera = "There is no camera to scan with. Paste the invitation instead."
-    static let cameraOff = "The camera is off for Pai Sho. Paste the invitation instead."
+    static let noCamera = "There is no camera to scan with."
+    static let cameraOff = "The camera is off for Pai Sho. Turn it on in Settings, Privacy & Security, Camera."
 
     func start(
         in preview: AVCaptureVideoPreviewLayer,
@@ -117,12 +117,12 @@ final class ScannerController: NSObject, AVCaptureMetadataOutputObjectsDelegate 
         session.addInput(input)
         let output = AVCaptureMetadataOutput()
         guard session.canAddOutput(output) else {
-            onMessage?("This camera cannot read a QR code. Paste the invitation instead.")
+            onMessage?("This camera cannot read a QR code.")
             return
         }
         session.addOutput(output)
         guard output.availableMetadataObjectTypes.contains(.qr) else {
-            onMessage?("This camera cannot read a QR code. Paste the invitation instead.")
+            onMessage?("This camera cannot read a QR code.")
             return
         }
         output.setMetadataObjectsDelegate(self, queue: .main)

@@ -46,18 +46,23 @@ public struct PaiShoView<Controls: View>: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260)
                 #endif
                 .toolbar {
+                    // The phone scans an invitation with its camera; the Mac
+                    // pastes one, since it has no camera to point at a code.
                     ToolbarItemGroup(placement: .primaryAction) {
+                        #if os(iOS)
                         Button {
                             sheet = .scan
                         } label: {
                             Label("Scan", systemImage: "qrcode.viewfinder")
                         }
+                        #else
                         PasteButton(payloadType: String.self) { strings in
                             let text = strings.first ?? ""
                             Task { @MainActor in
                                 sheet = .accept(text.trimmingCharacters(in: .whitespacesAndNewlines))
                             }
                         }
+                        #endif
                     }
                 }
         } detail: {
@@ -150,7 +155,11 @@ struct PeerList<Controls: View>: View {
                     if let problem = store.problem {
                         Text(problem)
                     } else if store.loadedOnce {
-                        Text("Scan an invitation, or paste one.")
+                        #if os(iOS)
+                        Text("Scan an invitation.")
+                        #else
+                        Text("Paste an invitation.")
+                        #endif
                     } else {
                         Text("Looking for pai-sho...")
                     }
