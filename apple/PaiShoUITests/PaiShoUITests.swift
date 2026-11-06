@@ -6,35 +6,21 @@ import XCTest
 /// TEST_RUNNER_PAI_SHO_INVITE and TEST_RUNNER_PAI_SHO_PORT. Skipped without
 /// them.
 final class PaiShoUITests: XCTestCase {
-    func testPasteAcceptAndOpenAPort() throws {
+    func testAcceptAndOpenAPort() throws {
         let env = ProcessInfo.processInfo.environment
         guard let invite = env["PAI_SHO_INVITE"], let port = env["PAI_SHO_PORT"] else {
             throw XCTSkip("set TEST_RUNNER_PAI_SHO_INVITE and TEST_RUNNER_PAI_SHO_PORT")
         }
         let expect = env["PAI_SHO_EXPECT"] ?? ""
 
-        UIPasteboard.general.string = invite
-        var app = XCUIApplication()
+        // The phone takes an invitation by scanning it, which a simulator
+        // cannot do, so the test hands it over with the -invite launch
+        // argument. That opens the same sheet a scan does.
+        let app = XCUIApplication()
+        app.launchArguments = ["-invite", invite]
         app.launch()
-
-        let paste = app.buttons["Paste"]
-        XCTAssertTrue(paste.waitForExistence(timeout: 10))
-        attach(app, "before-paste")
-        paste.tap()
-
-        var name = app.textFields["name"]
-        if !name.waitForExistence(timeout: 10) {
-            // The system Paste button may refuse a synthesized tap. Open the
-            // same sheet with the invitation the way the app's -invite launch
-            // argument does, and go on from there.
-            attach(app, "paste-did-not-open")
-            app.terminate()
-            app = XCUIApplication()
-            app.launchArguments = ["-invite", invite]
-            app.launch()
-            name = app.textFields["name"]
-            XCTAssertTrue(name.waitForExistence(timeout: 10))
-        }
+        let name = app.textFields["name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 10))
         name.tap()
         name.typeText("mac")
         attach(app, "accept-sheet")
