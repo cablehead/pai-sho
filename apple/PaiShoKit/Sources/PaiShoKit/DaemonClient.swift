@@ -68,6 +68,9 @@ public struct PortID: Hashable, Sendable {
 
 public enum DaemonError: Error, LocalizedError, Equatable {
     case notRunning
+    /// The socket is there but belongs to someone else, as when the daemon
+    /// runs as root and keeps its socket to itself.
+    case noAccess(String)
     case badResponse
     case refused(String)
 
@@ -75,6 +78,8 @@ public enum DaemonError: Error, LocalizedError, Equatable {
         switch self {
         case .notRunning:
             return "pai-sho is not running."
+        case .noAccess(let path):
+            return "This user may not use \(path)."
         case .badResponse:
             return "pai-sho sent a response this app could not read."
         case .refused(let message):
@@ -117,6 +122,29 @@ public struct DaemonClient: Sendable {
         if let message = object["Error"] as? String { throw DaemonError.refused(message) }
         if object["Ok"] != nil { return }
         throw DaemonError.badResponse
+    }
+
+    /// A new one-time invitation, valid 5 minutes. `name` is what to call the
+    /// peer that takes it up.
+    public func invite(name: String?) async throws -> String {
+        var body: [String: Any] = ["key": NSNull(), "expose": [Int]()]
+        if let name, !name.isEmpty {
+            body["name"] = name
+        } else {
+            body["name"] = NSNull()
+        }
+        let request = try JSONSerialization.data(withJSONObject: ["Invite": body])
+        guard var line = String(data: request, encoding: .utf8) else { throw DaemonError.badResponse }
+        line.append("\n")
+        return try Self.invitation(fromInviteReply: try await exchange(line))
+    }
+
+    /// Parse an `Invite` reply.
+    public static func invitation(fromInviteReply data: Data) throws -> String {
+        let object = try jsonObject(data)
+        if let message = object["Error"] as? String { throw DaemonError.refused(message) }
+        guard let invite = object["Invite"] as? String, !invite.isEmpty else { throw DaemonError.badResponse }
+        return invite
     }
 
     /// Parse a `List` reply. Online peers first, then by title.
@@ -200,7 +228,9 @@ public struct DaemonClient: Sendable {
                 connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }
-        guard connected == 0 else { throw DaemonError.notRunning }
+        guard connected == 0 else {
+            throw errno == EACCES ? DaemonError.noAccess(path) : DaemonError.notRunning
+        }
         try writeAll(fd, Data(line.utf8))
         return try readLine(fd)
     }

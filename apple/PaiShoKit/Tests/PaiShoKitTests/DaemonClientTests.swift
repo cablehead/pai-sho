@@ -56,4 +56,12 @@ import Testing
             try DaemonClient.peers(fromListReply: Data(#"{"Error":"nope"}"#.utf8))
         }
     }
+
+    @Test func anInviteReplyIsTheInvitation() throws {
+        let invite = try DaemonClient.invitation(fromInviteReply: Data(#"{"Invite":"abc.def"}"#.utf8))
+        #expect(invite == "abc.def")
+        #expect(throws: DaemonError.refused("no")) {
+            try DaemonClient.invitation(fromInviteReply: Data(#"{"Error":"no"}"#.utf8))
+        }
+    }
 }

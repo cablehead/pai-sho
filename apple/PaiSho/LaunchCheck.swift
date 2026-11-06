@@ -9,9 +9,24 @@ import ScreenCaptureKit
 /// `-accept <invitation>` (with `-name <name>`) takes it up, the same call
 /// the Accept button makes. `-snapshot <path>` writes a PNG of the app's
 /// window after `-snapshotAfter <seconds>` (default 10), then quits.
+///
+/// A checked app must never take the user's focus. With any of these
+/// arguments it becomes an accessory app (no Dock icon, never active) and its
+/// windows sit off screen, where ScreenCaptureKit still captures them. Launch
+/// it with `open -g` so it does not activate at launch either.
 enum LaunchCheck {
+    static var active: Bool {
+        let defaults = UserDefaults.standard
+        return ["snapshot", "accept", "open", "inviting"].contains { defaults.object(forKey: $0) != nil }
+    }
+
     @MainActor
     static func run(store: PeerStore) async {
+        guard active else { return }
+        NSApp.setActivationPolicy(.accessory)
+        for window in NSApp.windows {
+            window.setFrameOrigin(NSPoint(x: -20_000, y: -20_000))
+        }
         let defaults = UserDefaults.standard
         if let invite = defaults.string(forKey: "accept") {
             do {

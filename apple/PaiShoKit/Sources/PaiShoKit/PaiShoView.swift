@@ -10,32 +10,37 @@ public struct PaiShoView<Controls: View>: View {
     @State private var sheet: Sheet?
     @State private var open: UInt16?
     @State private var invite: String?
+    @State private var inviting: Bool
 
     enum Sheet: Identifiable {
         case scan
         case accept(String)
+        case invite
 
         var id: String {
             switch self {
             case .scan: return "scan"
             case .accept(let invite): return "accept:" + invite
+            case .invite: return "invite"
             }
         }
     }
 
     /// `invite`, when given, opens the add-a-peer sheet with it filled in, as
     /// Paste would. `open`, when given, opens the first port with that number
-    /// once a peer lists it.
+    /// once a peer lists it. `inviting` opens the Invite sheet (macOS).
     public init(
         store: PeerStore,
         invite: String? = nil,
         open: UInt16? = nil,
+        inviting: Bool = false,
         @ViewBuilder controls: () -> Controls
     ) {
         self.store = store
         self.controls = controls()
         _invite = State(initialValue: invite)
         _open = State(initialValue: open)
+        _inviting = State(initialValue: inviting)
     }
 
     public var body: some View {
@@ -56,6 +61,11 @@ public struct PaiShoView<Controls: View>: View {
                             Label("Scan", systemImage: "qrcode.viewfinder")
                         }
                         #else
+                        Button {
+                            sheet = .invite
+                        } label: {
+                            Label("Invite", systemImage: "qrcode")
+                        }
                         PasteButton(payloadType: String.self) { strings in
                             let text = strings.first ?? ""
                             Task { @MainActor in
@@ -90,16 +100,25 @@ public struct PaiShoView<Controls: View>: View {
                 ScanSheet { code in self.sheet = .accept(code) }
             case .accept(let invite):
                 AcceptSheet(store: store, invite: invite)
+            case .invite:
+                #if os(macOS)
+                InviteSheet(client: store.client)
+                #endif
             }
         }
         .task { await store.watch() }
         .task {
             // On macOS a sheet presented while the window is still coming up
             // is sometimes dropped, so give the window a moment first.
-            guard let invite else { return }
-            self.invite = nil
+            guard invite != nil || inviting else { return }
             try? await Task.sleep(for: .milliseconds(500))
-            sheet = .accept(invite)
+            if let invite {
+                self.invite = nil
+                sheet = .accept(invite)
+            } else {
+                inviting = false
+                sheet = .invite
+            }
         }
         .onChange(of: store.peers) {
             if let port = open,
@@ -115,8 +134,8 @@ public struct PaiShoView<Controls: View>: View {
 }
 
 extension PaiShoView where Controls == EmptyView {
-    public init(store: PeerStore, invite: String? = nil, open: UInt16? = nil) {
-        self.init(store: store, invite: invite, open: open) { EmptyView() }
+    public init(store: PeerStore, invite: String? = nil, open: UInt16? = nil, inviting: Bool = false) {
+        self.init(store: store, invite: invite, open: open, inviting: inviting) { EmptyView() }
     }
 }
 

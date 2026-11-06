@@ -12,6 +12,7 @@ import SwiftUI
 /// `-invite <invitation>` opens the add-a-peer sheet with it, as Paste would.
 /// `-open <port>` opens the first port with that number once it is listed.
 /// `-socket <path>` talks to another daemon (Mac only).
+/// `-inviting YES` opens the Invite sheet (Mac only).
 /// `-byName NO` opens pages at the address a port is bound at, for a daemon
 /// without the `.pai-sho` resolver (Mac only).
 @main
@@ -38,8 +39,13 @@ struct PaiShoApp: App {
             }
             .task { process.start() }
             #else
-            PaiShoView(store: store, invite: Self.launchInvite, open: Self.launchOpen)
-                .frame(minWidth: 720, minHeight: 480)
+            PaiShoView(
+                store: store,
+                invite: Self.launchInvite,
+                open: Self.launchOpen,
+                inviting: UserDefaults.standard.bool(forKey: "inviting")
+            )
+            .frame(minWidth: 720, minHeight: 480)
                 #if DEBUG
                 .task { await LaunchCheck.run(store: store) }
                 #endif
