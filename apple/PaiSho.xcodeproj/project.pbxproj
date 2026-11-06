@@ -233,6 +233,7 @@
 				ARCHS = arm64;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 286QYU5E29;
 				"CODE_SIGN_IDENTITY[sdk=iphonesimulator*]" = "-";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				COPY_PHASE_STRIP = NO;
@@ -254,6 +255,7 @@
 				ARCHS = arm64;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 286QYU5E29;
 				"CODE_SIGN_IDENTITY[sdk=iphonesimulator*]" = "-";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				COPY_PHASE_STRIP = NO;
