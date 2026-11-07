@@ -20,6 +20,14 @@ import Testing
         #expect(peer.pageURL(port: 8080, byName: true)?.absoluteString == "http://mac.pai-sho:8080/")
     }
 
+    @Test func aPageThatFailsOverHttpIsTriedOverHttps() throws {
+        // A peer serving TLS on the port, such as an n2 board on 3042.
+        let url = try #require(URL(string: "http://127.0.0.1:3042/"))
+        #expect(Peer.secureRetry(for: url)?.absoluteString == "https://127.0.0.1:3042/")
+        let secure = try #require(URL(string: "https://127.0.0.1:3042/"))
+        #expect(Peer.secureRetry(for: secure) == nil)
+    }
+
     @Test func aPortNotBoundYetHasNoPage() throws {
         let reply = """
         {"List":{"me":"m","peers":[{"key":"k","name":null,"online":false,"admission":"code",\

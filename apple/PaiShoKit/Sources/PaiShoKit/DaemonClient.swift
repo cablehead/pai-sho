@@ -53,6 +53,15 @@ public struct Peer: Identifiable, Hashable, Sendable {
         guard let address = address(port: port) else { return nil }
         return URL(string: "http://\(address)/")
     }
+
+    /// A port's page opens over http first: the app cannot tell from the
+    /// port whether the peer serves TLS. When http fails, the page is tried
+    /// once more at this address, over https.
+    public static func secureRetry(for url: URL) -> URL? {
+        guard url.scheme == "http", var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        parts.scheme = "https"
+        return parts.url
+    }
 }
 
 /// A peer's port, used as the list selection.
