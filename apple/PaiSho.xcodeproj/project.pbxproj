@@ -11,6 +11,7 @@
 		A60000000000000000000006 /* LaunchCheck.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000C /* LaunchCheck.swift */; };
 		A60000000000000000000004 /* PaiShoKit in Frameworks */ = {isa = PBXBuildFile; productRef = B20000000000000000000001 /* PaiShoKit */; };
 		A60000000000000000000005 /* PaiShoUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000008 /* PaiShoUITests.swift */; };
+		A60000000000000000000007 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000D /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -35,6 +36,7 @@
 		A1000000000000000000000B /* Info-macOS.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Info-macOS.plist"; sourceTree = "<group>"; };
 		A1000000000000000000000C /* LaunchCheck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchCheck.swift; sourceTree = "<group>"; };
 		A1000000000000000000000A /* build-rust.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "build-rust.sh"; sourceTree = "<group>"; };
+		A1000000000000000000000D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -76,6 +78,7 @@
 				A10000000000000000000005 /* PaiSho-Bridging-Header.h */,
 				A10000000000000000000004 /* Info.plist */,
 				A1000000000000000000000B /* Info-macOS.plist */,
+				A1000000000000000000000D /* Assets.xcassets */,
 			);
 			path = PaiSho;
 			sourceTree = "<group>";
@@ -107,6 +110,7 @@
 				A20000000000000000000003 /* Build pai-sho */,
 				A20000000000000000000002 /* Sources */,
 				A20000000000000000000001 /* Frameworks */,
+				A20000000000000000000006 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -173,6 +177,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A20000000000000000000006 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A60000000000000000000007 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
 		A20000000000000000000003 /* Build pai-sho */ = {
@@ -272,6 +287,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PaiSho/Info.plist;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				"INFOPLIST_FILE[sdk=macosx*]" = "PaiSho/Info-macOS.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -313,6 +329,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PaiSho/Info.plist;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				"INFOPLIST_FILE[sdk=macosx*]" = "PaiSho/Info-macOS.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
