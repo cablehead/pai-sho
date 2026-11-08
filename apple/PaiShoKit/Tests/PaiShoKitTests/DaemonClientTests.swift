@@ -236,4 +236,18 @@ import Testing
         store.processRunning = false
         #expect(store.status(of: mac) == .stopped)
     }
+
+    /// A peer that hasn't connected yet keeps the ports it had, greyed out,
+    /// instead of showing none and then snapping them in.
+    @Test func aPeerKeepsItsPortsUntilItConnects() {
+        let known = [Peer(key: "a", ports: [3042, 3043]), Peer(key: "b", ports: [80])]
+        let listed = [
+            Peer(key: "a", dialing: true),
+            Peer(key: "b", online: true, ports: [8080]),
+            Peer(key: "c"),
+        ]
+        let shown = PeerStore.keepingPorts(of: known, in: listed)
+        #expect(shown.map(\.ports) == [[3042, 3043], [8080], []])
+        #expect(shown[0].address(port: 3042) == nil)
+    }
 }

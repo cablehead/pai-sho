@@ -49,6 +49,18 @@ public final class PeerStore {
         }
     }
 
+    /// A peer announces its ports once connected. Until then, it keeps the
+    /// ones it had last time (not bound, so shown greyed out).
+    nonisolated static func keepingPorts(of known: [Peer], in listed: [Peer]) -> [Peer] {
+        let ports = Dictionary(known.map { ($0.key, $0.ports) }, uniquingKeysWith: { a, _ in a })
+        return listed.map { peer in
+            guard peer.ports.isEmpty, !peer.online, let kept = ports[peer.key] else { return peer }
+            var waiting = peer
+            waiting.ports = kept
+            return waiting
+        }
+    }
+
     private func rememberKnown(_ peers: [Peer]) {
         let rows: [[String: Any]] = peers.map { peer in
             var row: [String: Any] = ["key": peer.key, "ports": peer.ports.map(Int.init)]
@@ -91,7 +103,7 @@ public final class PeerStore {
 
     public func refresh() async {
         do {
-            let next = try await client.list()
+            let next = Self.keepingPorts(of: Self.known(in: defaults), in: try await client.list())
             loadedOnce = true
             reachable = true
             problem = nil

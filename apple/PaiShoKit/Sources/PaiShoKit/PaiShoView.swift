@@ -224,8 +224,9 @@ struct PeerHeader: View {
     }
 }
 
-/// A port, and the title its page had when last opened. The local address
-/// it listens at says nothing to the user, so it isn't shown.
+/// A port, and the title its page had when last opened, greyed out until it
+/// is bound here. The local address it listens at says nothing to the user,
+/// so it isn't shown.
 struct PortRow: View {
     var port: UInt16
     var bound: Bool
@@ -235,6 +236,7 @@ struct PortRow: View {
         HStack {
             Text(String(port))
                 .font(.body.monospacedDigit())
+                .foregroundStyle(bound ? .primary : .tertiary)
             Spacer()
             if let title {
                 Text(title)
@@ -242,10 +244,6 @@ struct PortRow: View {
                     .foregroundStyle(bound ? .secondary : .tertiary)
                     .lineLimit(1)
                     .truncationMode(.tail)
-            } else if !bound {
-                Text("not bound")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
             }
         }
     }
