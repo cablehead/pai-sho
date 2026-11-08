@@ -184,9 +184,11 @@ public struct PortPage: View {
                     }
                 }
                 #if os(iOS)
-                // On a phone the page is the point: it runs to the bottom
-                // edge, and the bar above keeps only the back button.
-                .ignoresSafeArea(.container, edges: .bottom)
+                // On a phone the page is the point: it fills the screen, its
+                // background running up behind the clock and down to the
+                // bottom edge. The web view still insets the content itself,
+                // so nothing sits under the status bar.
+                .ignoresSafeArea(.container, edges: [.top, .bottom])
                 #endif
         }
         .onChange(of: url) {
