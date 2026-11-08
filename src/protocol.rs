@@ -58,10 +58,6 @@ pub enum Request {
     Unproject {
         peer: String,
     },
-    /// Close every local listener and open it again at the same address,
-    /// leaving the links alone. iOS reclaims an app's listening sockets while
-    /// it is suspended; the app sends this when it comes back to the front.
-    Rebind,
 }
 
 /// Response from daemon to CLI client

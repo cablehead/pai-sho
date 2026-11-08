@@ -190,15 +190,6 @@ public struct DaemonClient: Sendable {
         self.socketPath = socketPath
     }
 
-    /// Renew every local listener, leaving the links alone.
-    public func rebind() async throws {
-        let data = try await exchange("\"Rebind\"\n")
-        if let text = String(data: data, encoding: .utf8), text == "\"Ok\"" { return }
-        let object = try Self.jsonObject(data)
-        if let message = object["Error"] as? String { throw DaemonError.refused(message) }
-        throw DaemonError.badResponse
-    }
-
     public func list() async throws -> [Peer] {
         try Self.peers(fromListReply: try await exchange("\"List\"\n"))
     }

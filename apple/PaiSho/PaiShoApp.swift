@@ -40,21 +40,17 @@ struct PaiShoApp: App {
                 ProcessSection(process: process, store: store)
             }
             .task { process.start() }
-            // iOS reclaims an app's listening sockets while it is suspended,
-            // so the local ports pai-sho bound are dead on return; the links
-            // to peers are not. Open just the listeners again, at the same
-            // numbers. If pai-sho can't be reached, start it again instead.
+            // iOS closes an app's listening sockets while it is in the
+            // background, so the ports pai-sho bound are dead on return.
+            // Start it again: saved peers redial and each port gets its
+            // saved number back.
             .onChange(of: phase) { _, now in
                 if now == .background { wasInBackground = true }
                 if now == .active, wasInBackground {
                     wasInBackground = false
                     Task {
-                        do {
-                            try await store.client.rebind()
-                        } catch {
-                            await process.stop()
-                            process.start()
-                        }
+                        await process.stop()
+                        process.start()
                         await store.refresh()
                     }
                 }
