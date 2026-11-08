@@ -169,7 +169,7 @@ struct PeerList<Controls: View>: View {
                         .accessibilityIdentifier("port-\(port)")
                     }
                 } header: {
-                    PeerHeader(title: store.title(for: peer), online: peer.online, asleep: peer.asleep)
+                    PeerHeader(title: store.title(for: peer), status: store.status(of: peer))
                 }
             }
         }
@@ -197,23 +197,24 @@ struct PeerList<Controls: View>: View {
 
 struct PeerHeader: View {
     var title: String
-    var online: Bool
-    /// It said goodbye and calls when it wakes
-    var asleep = false
+    var status: PeerStatus
 
-    private var status: String {
-        if online { return "online" }
-        return asleep ? "asleep" : "offline"
+    private var dot: Color {
+        switch status {
+        case .online: return .green
+        case .connecting, .starting: return .orange
+        default: return Color.secondary.opacity(0.5)
+        }
     }
 
     var body: some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(online ? Color.green : Color.secondary.opacity(0.5))
+                .fill(dot)
                 .frame(width: 8, height: 8)
             Text(title)
             Spacer()
-            Text(status)
+            Text(status == .connecting || status == .starting ? "\(status.rawValue)..." : status.rawValue)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -232,15 +233,13 @@ struct PortRow: View {
             Text(String(port))
                 .font(.body.monospacedDigit())
             Spacer()
-            if bound {
-                if let title {
-                    Text(title)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-            } else {
+            if let title {
+                Text(title)
+                    .font(.callout)
+                    .foregroundStyle(bound ? .secondary : .tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            } else if !bound {
                 Text("not bound")
                     .font(.caption)
                     .foregroundStyle(.tertiary)

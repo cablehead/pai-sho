@@ -113,6 +113,10 @@ pub struct PeerInfo {
     /// False from a daemon older than this field.
     #[serde(default)]
     pub asleep: bool,
+    /// We are trying to reach it: waiting to redial, or dialing. False from a
+    /// daemon older than this field.
+    #[serde(default)]
+    pub dialing: bool,
     /// How this peer came to be admitted: "added", "code", or "key"
     pub admission: String,
     /// Ports this peer exposes to us

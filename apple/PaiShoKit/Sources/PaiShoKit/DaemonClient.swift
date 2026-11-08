@@ -8,6 +8,9 @@ public struct Peer: Identifiable, Hashable, Sendable {
     /// It said goodbye and will call when it wakes, so the daemon is not
     /// dialing it. False from a daemon older than `asleep`.
     public var asleep: Bool
+    /// The daemon is trying to reach it: waiting to redial, or dialing.
+    /// False from a daemon older than `dialing`.
+    public var dialing: Bool
     /// Ports this peer exposes to us
     public var ports: [UInt16]
     /// The local address its ports are bound at, absent when not projected
@@ -23,6 +26,7 @@ public struct Peer: Identifiable, Hashable, Sendable {
         name: String? = nil,
         online: Bool = false,
         asleep: Bool = false,
+        dialing: Bool = false,
         ports: [UInt16] = [],
         ip: String? = nil,
         boundAt: [UInt16: String]? = nil
@@ -31,6 +35,7 @@ public struct Peer: Identifiable, Hashable, Sendable {
         self.name = name
         self.online = online
         self.asleep = asleep
+        self.dialing = dialing
         self.ports = ports
         self.ip = ip
         self.boundAt = boundAt
@@ -291,6 +296,7 @@ public struct DaemonClient: Sendable {
             name: row["name"] as? String,
             online: row["online"] as? Bool ?? false,
             asleep: row["asleep"] as? Bool ?? false,
+            dialing: row["dialing"] as? Bool ?? false,
             ports: ports,
             ip: row["ip"] as? String,
             boundAt: boundAt

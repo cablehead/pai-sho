@@ -40,6 +40,22 @@ const BIND_RETRY_DELAY: Duration = Duration::from_millis(200);
 const GOODBYE_WAIT: Duration = Duration::from_millis(800);
 
 /// Info about a connected peer
+/// Marks a peer as being dialed for as long as it lives.
+struct Dialing<'a>(&'a AtomicBool);
+
+impl<'a> Dialing<'a> {
+    fn start(flag: &'a AtomicBool) -> Self {
+        flag.store(true, Ordering::Relaxed);
+        Self(flag)
+    }
+}
+
+impl Drop for Dialing<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Relaxed);
+    }
+}
+
 struct Peer {
     endpoint_id: EndpointId,
     /// What we call this peer, from `--as` (None until something names it)
@@ -49,6 +65,9 @@ struct Peer {
     reach: std::sync::Mutex<Reach>,
     /// Dials started, for the tests to watch
     dial_attempts: AtomicU64,
+    /// Its connection loop is trying to reach it: waiting out the backoff,
+    /// or dialing.
+    dialing: AtomicBool,
     /// An invitation's one-time code, presented on connect by the accepter
     enroll_token: Option<String>,
     connection: RwLock<Option<Connection>>,
@@ -95,6 +114,7 @@ impl Peer {
                 Reach::invited()
             }),
             dial_attempts: AtomicU64::new(0),
+            dialing: AtomicBool::new(false),
             enroll_token,
             connection: RwLock::new(connection),
             conn_dialed_by_us: AtomicBool::new(false),
@@ -326,6 +346,7 @@ impl PeerManager {
             }
 
             // Reconnect with exponential backoff
+            let _dialing = Dialing::start(&peer.dialing);
             loop {
                 if peer.removed.load(Ordering::Relaxed) {
                     return;
@@ -1166,6 +1187,7 @@ impl PeerManager {
                     .unwrap_or(false)
             };
             let asleep = peer.reach.lock().unwrap().asleep();
+            let dialing = !online && peer.dialing.load(Ordering::Relaxed);
             let surface = peer.surface.read().await.clone();
             let mut bound_at: Vec<BoundAt> = peer
                 .bindings
@@ -1189,6 +1211,7 @@ impl PeerManager {
                 name: peer.label.clone(),
                 online,
                 asleep,
+                dialing,
                 admission: admission.to_string(),
                 they_expose: peer.exposed_ports.read().await.clone(),
                 version: peer.version.read().await.clone(),

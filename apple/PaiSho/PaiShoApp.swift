@@ -45,6 +45,9 @@ struct PaiShoApp: App {
                 ProcessSection(process: process, store: store)
             }
             .task { process.start() }
+            .onChange(of: process.running, initial: true) { _, now in
+                store.processRunning = now
+            }
             // iOS suspends the app soon after it goes to the background, and
             // closes its listening sockets. Before that, the process tells
             // each peer goodbye, so they stop dialing a phone that cannot

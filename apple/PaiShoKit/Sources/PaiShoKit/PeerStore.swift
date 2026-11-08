@@ -15,6 +15,12 @@ public final class PeerStore {
     /// Why the last refresh failed, kept only while there are no peers to show
     public private(set) var problem: String?
     public private(set) var loadedOnce = false
+    /// The last refresh reached pai-sho. Until it does, `peers` are the ones
+    /// it listed last time, kept so the list is there while it starts.
+    public private(set) var reachable = false
+    /// Whether this app has its own pai-sho running (iOS), set by the app.
+    /// Nil where pai-sho is a service of its own (the Mac).
+    public var processRunning: Bool?
     /// Each page's title, as it was when last opened. Kept across launches.
     public private(set) var pageTitles: [PortID: String] = [:]
     private let defaults: UserDefaults
@@ -27,6 +33,40 @@ public final class PeerStore {
         for (key, title) in saved {
             if let id = PortID(storageKey: key) { pageTitles[id] = title }
         }
+        peers = Self.known(in: defaults)
+    }
+
+    static let knownKey = "knownPeers"
+
+    /// The peers pai-sho listed last, as they were: who they are and what
+    /// they expose, not whether they are online.
+    static func known(in defaults: UserDefaults) -> [Peer] {
+        let rows = defaults.array(forKey: knownKey) as? [[String: Any]] ?? []
+        return rows.compactMap { row in
+            guard let key = row["key"] as? String else { return nil }
+            let ports = (row["ports"] as? [Int] ?? []).compactMap { UInt16(exactly: $0) }
+            return Peer(key: key, name: row["name"] as? String, ports: ports)
+        }
+    }
+
+    private func rememberKnown(_ peers: [Peer]) {
+        let rows: [[String: Any]] = peers.map { peer in
+            var row: [String: Any] = ["key": peer.key, "ports": peer.ports.map(Int.init)]
+            if let name = peer.name { row["name"] = name }
+            return row
+        }
+        let before = Self.known(in: defaults).map { [$0.key, $0.name ?? "", $0.ports.description] }
+        let after = peers.map { [$0.key, $0.name ?? "", $0.ports.description] }
+        if before != after { defaults.set(rows, forKey: Self.knownKey) }
+    }
+
+    /// What to say beside a peer's name.
+    public func status(of peer: Peer) -> PeerStatus {
+        if !reachable { return processRunning == false ? .stopped : .starting }
+        if peer.online { return .online }
+        if peer.asleep { return .asleep }
+        if peer.dialing { return .connecting }
+        return .offline
     }
 
     static let titlesKey = "pageTitles"
@@ -53,12 +93,17 @@ public final class PeerStore {
         do {
             let next = try await client.list()
             loadedOnce = true
+            reachable = true
             problem = nil
             if next != peers { peers = next }
+            rememberKnown(next)
         } catch {
             loadedOnce = true
+            reachable = false
             problem = error.localizedDescription
-            if !peers.isEmpty { peers = [] }
+            // Keep showing who they are; nothing is online or bound now.
+            let known = peers.map { Peer(key: $0.key, name: $0.name, ports: $0.ports) }
+            if known != peers { peers = known }
         }
     }
 
@@ -85,4 +130,12 @@ public final class PeerStore {
         }
         return peer.title
     }
+}
+
+public enum PeerStatus: String, Sendable {
+    case online, asleep, connecting, offline
+    /// This app's pai-sho is starting, and has not listed its peers yet
+    case starting
+    /// This app's pai-sho is stopped
+    case stopped
 }

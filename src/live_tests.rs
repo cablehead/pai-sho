@@ -765,13 +765,14 @@ async fn a_message_from_a_newer_peer_is_dropped() {
     .await;
 }
 
-/// Whether `d` lists the peer `key` as asleep and offline.
+/// Whether `d` lists the peer `key` as asleep and offline, and is not
+/// trying to reach it.
 async fn sees_asleep(d: &TestDaemon, key: &str) -> Option<()> {
     let Response::List(list) = d.request(Request::List).await else {
         return None;
     };
     let p = list.peers.iter().find(|p| p.key == key)?;
-    (!p.online && p.asleep).then_some(())
+    (!p.online && p.asleep && !p.dialing).then_some(())
 }
 
 /// The iPhone app says goodbye on going to the background. The Mac stops
@@ -851,4 +852,35 @@ async fn a_plain_stop_says_no_goodbye() {
     let b = restart(b, &[&a], false).await;
     until(20, || sees_awake(&a, &b_key)).await;
     until(20, || sees_awake(&b, &a_key)).await;
+}
+
+/// A peer that is gone and being redialed lists as dialing, so the phone can
+/// say it is connecting rather than just offline.
+#[tokio::test]
+async fn a_peer_being_redialed_lists_as_dialing() {
+    let (a, b) = pair(IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
+    enroll(&a, &b, "b").await;
+    let (a_key, b_key) = (a.key(), b.key());
+    until(20, || sees_awake(&a, &b_key)).await;
+    until(20, || sees_awake(&b, &a_key)).await;
+    let Response::List(list) = a.request(Request::List).await else {
+        panic!("no list");
+    };
+    assert!(!list.peers.iter().find(|p| p.key == b_key).unwrap().dialing);
+
+    let TestDaemon {
+        daemon, _router, ..
+    } = b;
+    daemon.peers().stop().await;
+    _router.shutdown().await.ok();
+    daemon.endpoint().close().await;
+
+    until(10, || async {
+        let Response::List(list) = a.request(Request::List).await else {
+            return None;
+        };
+        let p = list.peers.iter().find(|p| p.key == b_key)?;
+        (!p.online && p.dialing).then_some(())
+    })
+    .await;
 }

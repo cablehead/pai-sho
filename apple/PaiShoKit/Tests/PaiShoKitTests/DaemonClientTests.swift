@@ -61,6 +61,19 @@ import Testing
         #expect(peers.first { $0.key == "b" }?.asleep == false)
     }
 
+    @Test func aPeerBeingRedialedIsDialing() throws {
+        let reply = """
+        {"List":{"me":"m","peers":[\
+        {"key":"a","name":"mac","online":false,"dialing":true,"admission":"code","they_expose":[],"ip":null,"bound":[]},\
+        {"key":"b","name":"old","online":false,"admission":"code","they_expose":[],"ip":null,"bound":[]}\
+        ],"i_expose":[],"grants":[]}}
+        """
+        let peers = try DaemonClient.peers(fromListReply: Data(reply.utf8))
+        #expect(peers.first { $0.key == "a" }?.dialing == true)
+        // A daemon older than `dialing` leaves it out.
+        #expect(peers.first { $0.key == "b" }?.dialing == false)
+    }
+
     @Test func aSleepReplyIsOkOrRefused() throws {
         try DaemonClient.ok(fromReply: Data(#""Ok""#.utf8))
         #expect(throws: DaemonError.refused("no")) {
@@ -205,5 +218,22 @@ import Testing
 
         let next = PeerStore(client: client, opensByName: false, defaults: defaults)
         #expect(next.pageTitles == [id: "n2 board"])
+    }
+
+    /// On launch the app's pai-sho takes a moment to start. Until it answers,
+    /// the peers it listed last time are shown, as starting.
+    @MainActor @Test func knownPeersShowWhilePaiShoStarts() async throws {
+        let defaults = try #require(UserDefaults(suiteName: "KnownPeers-\(UUID())"))
+        defaults.set([["key": "abc123", "name": "mac", "ports": [3042]]], forKey: PeerStore.knownKey)
+        let store = PeerStore(client: DaemonClient(socketPath: "/nonexistent"), opensByName: false, defaults: defaults)
+        let mac = try #require(store.peers.first)
+        #expect(mac.title == "mac" && mac.ports == [3042] && !mac.online)
+        #expect(store.status(of: mac) == .starting)
+
+        await store.refresh()
+        #expect(store.peers.map(\.key) == ["abc123"])
+        #expect(store.problem != nil)
+        store.processRunning = false
+        #expect(store.status(of: mac) == .stopped)
     }
 }
