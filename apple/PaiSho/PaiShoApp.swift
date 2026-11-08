@@ -143,7 +143,16 @@ struct ProcessSection: View {
 
     var body: some View {
         Section {
-            HStack {
+            // A switch, green while pai-sho runs.
+            Toggle(isOn: Binding(
+                get: { process.running },
+                set: { on in
+                    Task {
+                        if on { process.start() } else { await process.stop() }
+                        await store.refresh()
+                    }
+                }
+            )) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(process.running ? "Running" : "Stopped")
                     if let problem = process.problem {
@@ -152,22 +161,9 @@ struct ProcessSection: View {
                             .foregroundStyle(.red)
                     }
                 }
-                Spacer()
-                if process.running {
-                    Button("Stop", role: .destructive) {
-                        Task {
-                            await process.stop()
-                            await store.refresh()
-                        }
-                    }
-                } else {
-                    Button("Start") {
-                        process.start()
-                        Task { await store.refresh() }
-                    }
-                }
             }
-            .buttonStyle(.borderless)
+            .tint(.green)
+            .accessibilityIdentifier("running")
             IconRow()
         } header: {
             Text("This phone")

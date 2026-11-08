@@ -113,17 +113,20 @@ final class PaiShoUITests: XCTestCase {
         start.press(forDuration: 0.05, thenDragTo: end)
     }
 
-    /// Stop and Start the process, and open Scan, which in the simulator has
+    /// Switch the process off and on, and open Scan, which in the simulator has
     /// no camera and says so.
     func testStopStartAndScan() {
         let app = XCUIApplication()
         app.launch()
 
         XCTAssertTrue(app.staticTexts["Running"].waitForExistence(timeout: 10))
-        app.buttons["Stop"].tap()
+        attach(app, "running")
+        // The switch itself sits at the right of its row.
+        let toggle = app.switches["running"].coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5))
+        toggle.tap()
         XCTAssertTrue(app.staticTexts["Stopped"].waitForExistence(timeout: 10))
         attach(app, "stopped")
-        app.buttons["Start"].tap()
+        toggle.tap()
         XCTAssertTrue(app.staticTexts["Running"].waitForExistence(timeout: 10))
 
         app.buttons["Scan"].tap()
