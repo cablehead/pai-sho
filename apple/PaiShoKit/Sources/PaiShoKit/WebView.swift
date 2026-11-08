@@ -9,9 +9,8 @@ struct WebView: PlatformViewRepresentable {
     @Binding var shown: URL
     @Binding var failure: String?
     var onTitle: (String) -> Void = { _ in }
-    /// Leave the page. Nothing in the view calls it now: on iPhone the
-    /// navigation's own swipe leaves the page (PageSwipe).
-    var onLeave: () -> Void = {}
+    /// Back, forward and reload for the page's controls.
+    var nav: PageNav
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         var loaded: URL?
@@ -23,10 +22,6 @@ struct WebView: PlatformViewRepresentable {
 
         init(_ parent: WebView) { self.parent = parent }
 
-        #if os(iOS)
-        var swipe: PageSwipe?
-        #endif
-
         func webView(_ view: WKWebView, didFinish navigation: WKNavigation!) {
             parent.failure = nil
             #if os(iOS)
@@ -35,7 +30,6 @@ struct WebView: PlatformViewRepresentable {
             view.isOpaque = true
             view.backgroundColor = nil
             view.scrollView.backgroundColor = nil
-            swipe?.attach()
             #endif
             retries = Coordinator.maxRetries
             if let title = view.title, !title.isEmpty { parent.onTitle(title) }
@@ -141,15 +135,9 @@ struct WebView: PlatformViewRepresentable {
         view.backgroundColor = .clear
         view.scrollView.backgroundColor = .clear
         #endif
-        #if os(macOS)
+        // A browser's own swipes: back and forward through the page's history.
         view.allowsBackForwardNavigationGestures = true
-        #else
-        // Edge swipes slide the page under the finger: right for back (an n2
-        // thread to its list, then out to the main screen), left for forward.
-        let swipe = PageSwipe(view)
-        context.coordinator.swipe = swipe
-        DispatchQueue.main.async { swipe.attach() }
-        #endif
+        nav.attach(view)
         view.navigationDelegate = context.coordinator
         view.uiDelegate = context.coordinator
         return view
@@ -174,6 +162,7 @@ public struct PortPage: View {
     var onLeave: () -> Void
     @State private var shown: URL
     @State private var failure: String?
+    @State private var nav = PageNav()
 
     public init(
         title: String,
@@ -204,7 +193,7 @@ public struct PortPage: View {
                 .padding(.vertical, 6)
             Divider()
             #endif
-            WebView(url: url, shown: $shown, failure: $failure, onTitle: onTitle, onLeave: onLeave)
+            WebView(url: url, shown: $shown, failure: $failure, onTitle: onTitle, nav: nav)
                 .id(url)
                 .overlay {
                     if let failure {
@@ -229,11 +218,60 @@ public struct PortPage: View {
             failure = nil
         }
         #if os(iOS)
-        // No header on a phone: the clock, then the page. Swipe right to go
-        // back, in the page and then out of it.
+        // No header on a phone: the clock, then the page, and a browser's
+        // controls at the bottom. The page's back and forward go through its
+        // own history, as in any browser; the main screen is a button of its
+        // own, so getting out never means walking back through the history.
         .toolbar(.hidden, for: .navigationBar)
+        .toolbar {
+            ToolbarItemGroup(placement: .bottomBar) {
+                Button(action: onLeave) {
+                    Label("Pai Sho", systemImage: "house")
+                }
+                .accessibilityIdentifier("peers")
+                Spacer()
+                Button { nav.view?.goBack() } label: {
+                    Label("Back", systemImage: "chevron.backward")
+                }
+                .disabled(!nav.canGoBack)
+                .accessibilityIdentifier("back")
+                Button { nav.view?.goForward() } label: {
+                    Label("Forward", systemImage: "chevron.forward")
+                }
+                .disabled(!nav.canGoForward)
+                .accessibilityIdentifier("forward")
+                Spacer()
+                Button { nav.view?.reload() } label: {
+                    Label("Reload", systemImage: "arrow.clockwise")
+                }
+                .accessibilityIdentifier("reload")
+            }
+        }
         #else
         .navigationTitle(title)
         #endif
+    }
+}
+
+/// What a page's controls need from its web view: whether it can go back or
+/// forward, and the view to tell.
+@MainActor
+@Observable
+final class PageNav {
+    @ObservationIgnored weak var view: WKWebView?
+    var canGoBack = false
+    var canGoForward = false
+    @ObservationIgnored private var watches: [NSKeyValueObservation] = []
+
+    func attach(_ view: WKWebView) {
+        self.view = view
+        watches = [
+            view.observe(\.canGoBack, options: [.initial, .new]) { [weak self] view, _ in
+                MainActor.assumeIsolated { self?.canGoBack = view.canGoBack }
+            },
+            view.observe(\.canGoForward, options: [.initial, .new]) { [weak self] view, _ in
+                MainActor.assumeIsolated { self?.canGoForward = view.canGoForward }
+            },
+        ]
     }
 }
