@@ -58,6 +58,10 @@ pub enum Request {
     Unproject {
         peer: String,
     },
+    /// This daemon is about to be suspended. Say goodbye to every connected
+    /// peer, close those links, and dial no one until restarted. The iOS app
+    /// sends it on going to the background. A plain stop does not (ADR 0009).
+    Sleep,
 }
 
 /// Response from daemon to CLI client

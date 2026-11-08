@@ -35,6 +35,9 @@ const ENROLL_TIMEOUT: Duration = Duration::from_secs(10);
 const BIND_ATTEMPTS: u32 = 5;
 /// Delay between bind attempts
 const BIND_RETRY_DELAY: Duration = Duration::from_millis(200);
+/// How long `sleep` waits for peers to read its goodbye. They are told in
+/// parallel, so this bounds the whole request.
+const GOODBYE_WAIT: Duration = Duration::from_millis(800);
 
 /// Info about a connected peer
 struct Peer {
@@ -137,6 +140,8 @@ pub struct PeerManager {
     /// its own number if free, else one the OS picks (see src/ports.rs). True
     /// on iOS, where an app can add no address and can bind only 127.0.0.1.
     localhost_only: AtomicBool,
+    /// Set by `sleep`: we said goodbye and dial no one until restarted
+    sleeping: AtomicBool,
 }
 
 impl PeerManager {
@@ -165,6 +170,7 @@ impl PeerManager {
             self_name,
             bind_lock: Mutex::new(()),
             localhost_only: AtomicBool::new(localhost_only),
+            sleeping: AtomicBool::new(false),
         }
     }
 
@@ -275,7 +281,8 @@ impl PeerManager {
 
     /// Whether `peer`'s loop should dial it now
     fn dials(&self, peer: &Peer) -> bool {
-        peer.reach.lock().unwrap().dials(false)
+        let we_sleep = self.sleeping.load(Ordering::SeqCst);
+        peer.reach.lock().unwrap().dials(we_sleep)
     }
 
     /// Spawn the connection management loop for a peer
@@ -1359,6 +1366,47 @@ impl PeerManager {
                 name: record.name,
             });
         }
+    }
+
+    /// Say goodbye to every connected peer and stop dialing: this daemon is
+    /// about to be suspended. A peer that reads the goodbye waits for us to
+    /// call, so we must: each one is pinned to be dialed after a restart, even
+    /// one we invited. Returns once each peer has closed its end, or after
+    /// `GOODBYE_WAIT`. A daemon older than Goodbye drops it and never closes,
+    /// so it costs the whole wait.
+    ///
+    /// Only an explicit `Sleep` reaches this. A daemon stopping or restarting
+    /// says nothing, because a peer told goodbye stops dialing, and a daemon
+    /// that restarts waits for a call from every peer it invited (ADR 0009).
+    pub async fn sleep(&self) {
+        self.sleeping.store(true, Ordering::SeqCst);
+        let peers: Vec<Arc<Peer>> = self.peers.iter().map(|e| e.value().clone()).collect();
+        let mut goodbyes = tokio::task::JoinSet::new();
+        for peer in peers {
+            let held = peer.connection.read().await.clone();
+            let Some(conn) = held.filter(|c| c.close_reason().is_none()) else {
+                continue;
+            };
+            let key = peer.endpoint_id.to_string();
+            if let Err(e) = self.pins.mark_dialed(&key) {
+                warn!("failed to pin {} to be dialed: {}", key, e);
+            }
+            goodbyes.spawn(async move {
+                let said = tokio::time::timeout(GOODBYE_WAIT, async {
+                    Self::send_message(&conn, &PeerMessage::Goodbye).await?;
+                    conn.closed().await;
+                    Ok::<_, anyhow::Error>(())
+                })
+                .await;
+                match said {
+                    Ok(Ok(())) => info!("said goodbye to {}", key),
+                    Ok(Err(e)) => warn!("failed to say goodbye to {}: {}", key, e),
+                    Err(_) => info!("{} did not answer goodbye; closing", key),
+                }
+                conn.close(0u32.into(), b"goodbye");
+            });
+        }
+        while goodbyes.join_next().await.is_some() {}
     }
 
     /// Stop every peer's loop and close its listeners, leaving pins, surfaces

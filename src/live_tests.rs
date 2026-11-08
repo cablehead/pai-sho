@@ -764,3 +764,91 @@ async fn a_message_from_a_newer_peer_is_dropped() {
     })
     .await;
 }
+
+/// Whether `d` lists the peer `key` as asleep and offline.
+async fn sees_asleep(d: &TestDaemon, key: &str) -> Option<()> {
+    let Response::List(list) = d.request(Request::List).await else {
+        return None;
+    };
+    let p = list.peers.iter().find(|p| p.key == key)?;
+    (!p.online && p.asleep).then_some(())
+}
+
+/// The iPhone app says goodbye on going to the background. The Mac stops
+/// dialing it, and the phone calls when it comes back.
+#[tokio::test]
+async fn a_peer_that_says_goodbye_is_not_dialed_until_it_calls() {
+    let (a, b) = pair(IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
+    enroll(&a, &b, "b").await;
+    let (a_key, b_key) = (a.key(), b.key());
+    let (a_id, b_id) = (a.daemon.endpoint().id(), b.daemon.endpoint().id());
+    until(20, || sees_awake(&a, &b_key)).await;
+    until(20, || sees_awake(&b, &a_key)).await;
+
+    // The app has a few seconds in the background, so Sleep must not hang.
+    let started = std::time::Instant::now();
+    assert!(matches!(b.request(Request::Sleep).await, Response::Ok));
+    assert!(started.elapsed() < Duration::from_secs(1));
+    until(5, || sees_asleep(&a, &b_key)).await;
+
+    // A dropped link is redialed after a second. Give it three.
+    let (a_dialed, b_dialed) = (
+        a.daemon.peers().dial_attempts(&b_id),
+        b.daemon.peers().dial_attempts(&a_id),
+    );
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(a.daemon.peers().dial_attempts(&b_id), a_dialed);
+    assert_eq!(b.daemon.peers().dial_attempts(&a_id), b_dialed);
+    assert!(sees_asleep(&a, &b_key).await.is_some());
+
+    let b = restart(b, &[&a], false).await;
+    until(20, || sees_awake(&a, &b_key)).await;
+    until(20, || sees_awake(&b, &a_key)).await;
+}
+
+/// A peer that went to sleep calls back even when it was the inviter, since
+/// the other end is waiting for it.
+#[tokio::test]
+async fn an_inviter_that_says_goodbye_calls_back() {
+    let (a, b) = pair(IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
+    // b invites, a accepts: b would wait for a's call after a restart.
+    enroll(&b, &a, "a").await;
+    let (a_key, b_key) = (a.key(), b.key());
+    until(20, || sees_awake(&a, &b_key)).await;
+    until(20, || sees_awake(&b, &a_key)).await;
+
+    assert!(matches!(b.request(Request::Sleep).await, Response::Ok));
+    until(5, || sees_asleep(&a, &b_key)).await;
+
+    let b = restart(b, &[&a], false).await;
+    until(20, || sees_awake(&a, &b_key)).await;
+    until(20, || sees_awake(&b, &a_key)).await;
+}
+
+/// Stopping or restarting a daemon says no goodbye. Its peers keep dialing
+/// it, because a daemon that restarts waits for a call from every peer it
+/// invited.
+#[tokio::test]
+async fn a_plain_stop_says_no_goodbye() {
+    let (a, b) = pair(IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
+    enroll(&a, &b, "b").await;
+    let (a_key, b_key) = (a.key(), b.key());
+    let b_id = b.daemon.endpoint().id();
+    until(20, || sees_awake(&a, &b_key)).await;
+    until(20, || sees_awake(&b, &a_key)).await;
+
+    let a_dialed = a.daemon.peers().dial_attempts(&b_id);
+    b.daemon.peers().stop().await;
+    until(10, || async {
+        (a.daemon.peers().dial_attempts(&b_id) > a_dialed).then_some(())
+    })
+    .await;
+    let Response::List(list) = a.request(Request::List).await else {
+        panic!("no list");
+    };
+    assert!(!list.peers.iter().find(|p| p.key == b_key).unwrap().asleep);
+
+    let b = restart(b, &[&a], false).await;
+    until(20, || sees_awake(&a, &b_key)).await;
+    until(20, || sees_awake(&b, &a_key)).await;
+}

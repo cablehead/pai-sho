@@ -114,6 +114,17 @@ impl Pins {
         self.put(key, label, true)
     }
 
+    /// Dial a pinned peer after a restart, as if we had taken up its
+    /// invitation. Leaves its name alone. A key with no pin is left unpinned.
+    pub fn mark_dialed(&self, key: &str) -> Result<()> {
+        let mut pins = self.load()?;
+        let Some(pin) = pins.iter_mut().find(|p| p.key == key && !p.dial) else {
+            return Ok(());
+        };
+        pin.dial = true;
+        self.save(&pins)
+    }
+
     fn put(&self, key: &str, label: Option<&str>, dial: bool) -> Result<()> {
         let mut pins = self.load()?;
         let dial = dial || pins.iter().any(|p| p.key == key && p.dial);
@@ -205,6 +216,16 @@ mod tests {
             .find(|p| p.key == "k3")
             .unwrap();
         assert!(k3.dial);
+        // a peer that calls us can be marked dialed, keeping its name
+        pins.add("k4", Some("phone")).unwrap();
+        pins.mark_dialed("k4").unwrap();
+        pins.mark_dialed("nope").unwrap();
+        let loaded = pins.load().unwrap();
+        let k4 = loaded.iter().find(|p| p.key == "k4").unwrap();
+        assert!(k4.dial);
+        assert_eq!(k4.label.as_deref(), Some("phone"));
+        assert!(!loaded.iter().any(|p| p.key == "nope"));
+
         // and a pins file from before `dial` existed still loads
         std::fs::write(dir.join("old.json"), r#"[{"key":"k9","label":null}]"#).unwrap();
         let old = Pins::new(dir.join("old.json")).load().unwrap();

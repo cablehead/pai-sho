@@ -374,6 +374,10 @@ impl Daemon {
                 Ok(()) => Response::Ok,
                 Err(e) => Response::Error(e.to_string()),
             },
+            Request::Sleep => {
+                self.peers.sleep().await;
+                Response::Ok
+            }
         }
     }
 }
