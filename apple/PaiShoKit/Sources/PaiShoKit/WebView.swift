@@ -64,6 +64,12 @@ struct WebView: PlatformViewRepresentable {
         let view = WKWebView()
         #if os(macOS)
         view.allowsMagnification = true
+        #else
+        // Without this the view paints white before the page arrives, a
+        // flash on a dark page. Clear, it shows the app's own background.
+        view.isOpaque = false
+        view.backgroundColor = .clear
+        view.scrollView.backgroundColor = .clear
         #endif
         view.allowsBackForwardNavigationGestures = true
         view.navigationDelegate = context.coordinator
