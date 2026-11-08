@@ -81,6 +81,11 @@ final class PaiShoUITests: XCTestCase {
         app.buttons["peers"].tap()
         XCTAssertTrue(row.waitForExistence(timeout: 10), "did not reach the main screen")
         attach(app, "main-screen")
+
+        // In again: the page is where it was left, as a browser's tab is.
+        row.tap()
+        XCTAssertTrue(app.webViews.staticTexts["page two"].waitForExistence(timeout: 10), "the page started over")
+        XCTAssertTrue(back.isEnabled, "the page's history was lost")
     }
 
     /// Back from the background, the page stays on screen while pai-sho

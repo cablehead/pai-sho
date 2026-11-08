@@ -125,7 +125,18 @@ struct WebView: PlatformViewRepresentable {
 
 
     func makeView(context: Context) -> WKWebView {
+        // A port's page is kept while the app runs, as a browser keeps a tab:
+        // out to the main screen and back in finds it where you left it, not
+        // reloaded at the port's front page.
+        if let kept = Tabs.views[url] {
+            context.coordinator.loaded = url
+            nav.attach(kept)
+            kept.navigationDelegate = context.coordinator
+            kept.uiDelegate = context.coordinator
+            return kept
+        }
         let view = WKWebView()
+        Tabs.views[url] = view
         #if os(macOS)
         view.allowsMagnification = true
         #else
@@ -274,4 +285,10 @@ final class PageNav {
             },
         ]
     }
+}
+
+/// The page open at each port's address, kept for the app's life.
+@MainActor
+enum Tabs {
+    static var views: [URL: WKWebView] = [:]
 }
