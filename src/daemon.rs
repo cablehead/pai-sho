@@ -374,6 +374,10 @@ impl Daemon {
                 Ok(()) => Response::Ok,
                 Err(e) => Response::Error(e.to_string()),
             },
+            Request::Rebind => {
+                self.peers.rebind().await;
+                Response::Ok
+            }
         }
     }
 }

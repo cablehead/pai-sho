@@ -757,6 +757,26 @@ impl PeerManager {
         info!("bound {} for port {}", at, port);
     }
 
+    /// Close every listener and open it again at the same address. The links
+    /// to peers are left alone: only the local sockets are renewed, which is
+    /// what an iOS app needs after being suspended. In localhost mode each port
+    /// asks for its saved number, so it comes back where it was.
+    pub async fn rebind(self: &Arc<Self>) {
+        let _guard = self.bind_lock.lock().await;
+        let peers: Vec<Arc<Peer>> = self.peers.iter().map(|e| e.value().clone()).collect();
+        for peer in peers {
+            let Some(ip) = peer.surface.read().await.as_ref().map(|s| s.ip) else {
+                continue;
+            };
+            let ports: Vec<u16> = peer.bindings.iter().map(|e| *e.key()).collect();
+            for port in ports {
+                self.release_binding(&peer, port).await;
+                self.bind_one(&peer, ip, port).await;
+            }
+        }
+        info!("rebound every listener");
+    }
+
     /// Release one binding, waiting for its task to finish so the listener is
     /// actually dropped before the port is reused. On the TUN backend, also
     /// tells the stack to stop listening (reads the peer's surface for the ip).

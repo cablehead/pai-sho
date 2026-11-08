@@ -724,3 +724,34 @@ async fn at_localhost_a_port_keeps_its_number_across_a_restart() {
     assert!(!table.contains(&a.key()));
     assert!(table.contains(&c.key()));
 }
+
+/// After a rebind (what the iOS app asks for when it comes back to the
+/// front), a localhost port listens at the same address and still carries
+/// bytes over the same link.
+#[tokio::test]
+async fn at_localhost_a_rebind_keeps_the_port_and_the_link() {
+    let port = echo_server().await;
+    let (a, b) = pair(IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
+    b.daemon.peers().bind_at_localhost();
+    enroll(&a, &b, "b").await;
+    a.request(Request::Expose {
+        port,
+        to: vec![b.key()],
+        all: false,
+    })
+    .await;
+
+    let before = bound_addr(&b, port).await;
+    assert!(matches!(b.request(Request::Rebind).await, Response::Ok));
+    let after = bound_addr(&b, port).await;
+    assert_eq!(before, after);
+
+    until(20, || async {
+        let mut sock = TcpStream::connect(after).await.ok()?;
+        sock.write_all(b"again").await.ok()?;
+        let mut buf = [0u8; 5];
+        sock.read_exact(&mut buf).await.ok()?;
+        (&buf == b"again").then_some(())
+    })
+    .await;
+}
