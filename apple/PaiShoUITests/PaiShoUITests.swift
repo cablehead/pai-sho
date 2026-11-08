@@ -76,14 +76,34 @@ final class PaiShoUITests: XCTestCase {
         sleep(2)
         attach(app, "board-thread")
 
+        // Pulled partway within the page and let go: it stays where it was.
+        let here = app.webViews.firstMatch.screenshot().pngRepresentation
+        nudgeFromLeftEdge(app, to: 0.3, hold: 2)
+        sleep(1)
+        attach(app, "after-page-nudge")
+        XCTAssertEqual(app.webViews.firstMatch.screenshot().pngRepresentation, here, "a short pull moved the page")
+
         swipeFromLeftEdge(app)
         sleep(2)
         attach(app, "after-first-swipe")
         XCTAssertTrue(app.webViews.firstMatch.exists, "first swipe left the page")
+        XCTAssertTrue(list.waitForExistence(timeout: 5), "first swipe did not go back to \(expect)")
+
+        // Pulled a little and let go: the page falls back where it was.
+        nudgeFromLeftEdge(app, to: 0.3, hold: 2)
+        sleep(1)
+        attach(app, "after-nudge")
+        XCTAssertFalse(row.isHittable, "a short pull left the page")
 
         swipeFromLeftEdge(app)
         XCTAssertTrue(row.waitForExistence(timeout: 10), "second swipe did not reach the main screen")
         attach(app, "main-screen")
+    }
+
+    private func nudgeFromLeftEdge(_ app: XCUIApplication, to x: CGFloat = 0.15, hold: TimeInterval = 0.3) {
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: hold)
     }
 
     private func swipeFromLeftEdge(_ app: XCUIApplication) {

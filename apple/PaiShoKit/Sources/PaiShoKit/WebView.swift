@@ -9,7 +9,8 @@ struct WebView: PlatformViewRepresentable {
     @Binding var shown: URL
     @Binding var failure: String?
     var onTitle: (String) -> Void = { _ in }
-    /// Swiping right with no page history left: leave the page.
+    /// Leave the page. Nothing in the view calls it now: on iPhone the
+    /// navigation's own swipe leaves the page (PageSwipe).
     var onLeave: () -> Void = {}
 
     final class Coordinator: NSObject, WKNavigationDelegate {
@@ -22,6 +23,10 @@ struct WebView: PlatformViewRepresentable {
 
         init(_ parent: WebView) { self.parent = parent }
 
+        #if os(iOS)
+        var swipe: PageSwipe?
+        #endif
+
         func webView(_ view: WKWebView, didFinish navigation: WKNavigation!) {
             parent.failure = nil
             #if os(iOS)
@@ -30,6 +35,7 @@ struct WebView: PlatformViewRepresentable {
             view.isOpaque = true
             view.backgroundColor = nil
             view.scrollView.backgroundColor = nil
+            swipe?.attach()
             #endif
             retries = Coordinator.maxRetries
             if let title = view.title, !title.isEmpty { parent.onTitle(title) }
@@ -59,25 +65,6 @@ struct WebView: PlatformViewRepresentable {
             else { return (.performDefaultHandling, nil) }
             return (.useCredential, URLCredential(trust: trust))
         }
-
-        #if os(iOS)
-        weak var webView: WKWebView?
-
-        /// Swipe right from the left edge: back in the page (an n2 thread to
-        /// its list), or out of the page once there is nothing to go back to.
-        @objc func swipeBack(_ gesture: UIScreenEdgePanGestureRecognizer) {
-            guard gesture.state == .ended, let view = webView else { return }
-            NSLog("pai-sho page swipe back, canGoBack=%d", view.canGoBack ? 1 : 0)
-            if view.canGoBack { view.goBack() } else { parent.onLeave() }
-        }
-
-        /// Swipe left from the right edge: forward in the page.
-        @objc func swipeForward(_ gesture: UIScreenEdgePanGestureRecognizer) {
-            guard gesture.state == .ended, let view = webView else { return }
-            NSLog("pai-sho page swipe forward, canGoForward=%d", view.canGoForward ? 1 : 0)
-            if view.canGoForward { view.goForward() }
-        }
-        #endif
 
         /// The local port refused or dropped the connection: nothing is
         /// listening there right now.
@@ -124,20 +111,11 @@ struct WebView: PlatformViewRepresentable {
         #if os(macOS)
         view.allowsBackForwardNavigationGestures = true
         #else
-        // Edge swipes: right goes back (and out, with no history left), left
-        // goes forward. The page's scrolling waits for them to fail, or it
-        // would take every touch first and they would never fire.
-        context.coordinator.webView = view
-        let back = UIScreenEdgePanGestureRecognizer(
-            target: context.coordinator, action: #selector(Coordinator.swipeBack(_:)))
-        back.edges = .left
-        let forward = UIScreenEdgePanGestureRecognizer(
-            target: context.coordinator, action: #selector(Coordinator.swipeForward(_:)))
-        forward.edges = .right
-        for swipe in [back, forward] {
-            view.addGestureRecognizer(swipe)
-            view.scrollView.panGestureRecognizer.require(toFail: swipe)
-        }
+        // Edge swipes slide the page under the finger: right for back (an n2
+        // thread to its list, then out to the main screen), left for forward.
+        let swipe = PageSwipe(view)
+        context.coordinator.swipe = swipe
+        DispatchQueue.main.async { swipe.attach() }
         #endif
         view.navigationDelegate = context.coordinator
         return view
