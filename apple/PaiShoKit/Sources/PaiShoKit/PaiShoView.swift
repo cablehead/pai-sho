@@ -178,7 +178,10 @@ struct PeerList<Controls: View>: View {
                 ContentUnavailableView {
                     Label("No peers", systemImage: "person.2")
                 } description: {
-                    if let problem = store.problem {
+                    if !store.reachable, store.processRunning == true {
+                        // The app's own pai-sho is still coming up.
+                        Text("Starting pai-sho...")
+                    } else if let problem = store.problem {
                         Text(problem)
                     } else if store.loadedOnce {
                         #if os(iOS)

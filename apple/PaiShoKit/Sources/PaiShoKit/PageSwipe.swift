@@ -3,8 +3,8 @@ import UIKit
 import UIKit.UIGestureRecognizerSubclass
 import WebKit
 
-/// Sideways swipes on a peer's page, from anywhere on it, that slide it under
-/// the finger. Pull far enough, or flick, and it carries on to the next page;
+/// A swipe right on a peer's page, from anywhere on it, that slides it under
+/// the finger. Pull far enough, or flick, and it carries on back;
 /// let go early and it falls back. Swiping right shows the page you came from
 /// underneath, from a snapshot taken while you were on it. With no history
 /// left, the navigation's own swipe slides the page away to the main screen.
@@ -90,8 +90,9 @@ final class PageSwipe: NSObject, UIGestureRecognizerDelegate {
         let speed = drag.velocity(in: view)
         // Sideways, not a scroll down the page.
         guard abs(speed.x) > abs(speed.y) * 1.5 else { return false }
+        // Only back: going deeper is a tap, which slides the page in.
         let back = speed.x > 0
-        guard back ? view.canGoBack : view.canGoForward else { return false }
+        guard back, view.canGoBack else { return false }
         // A page wider than the screen scrolls sideways first.
         let scroll = view.scrollView
         let room = scroll.contentSize.width - scroll.bounds.width
