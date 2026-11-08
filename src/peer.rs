@@ -319,11 +319,9 @@ impl PeerManager {
 
             if !manager.dials(&peer) {
                 // Inviter, not yet reached, or they said goodbye. They call us.
-                peer.conn_notify.notified().await;
-                if peer.removed.load(Ordering::Relaxed) {
+                if !Self::wait_for_call(&peer).await {
                     return;
                 }
-                info!("{} reconnected via incoming connection", peer.endpoint_id);
                 continue;
             }
 
@@ -355,11 +353,9 @@ impl PeerManager {
 
                 // A goodbye can land while we wait. Then they call us.
                 if !manager.dials(&peer) {
-                    peer.conn_notify.notified().await;
-                    if peer.removed.load(Ordering::Relaxed) {
+                    if !Self::wait_for_call(&peer).await {
                         return;
                     }
-                    info!("{} reconnected via incoming connection", peer.endpoint_id);
                     backoff.reset();
                     break;
                 }
@@ -428,6 +424,28 @@ impl PeerManager {
                 manager.announce_to(&peer).await;
                 backoff.reset();
                 break;
+            }
+        }
+    }
+
+    /// Wait for the peer to connect to us. A notification left from an earlier
+    /// call, whose connection has since closed, is passed over. False once
+    /// the peer is removed.
+    async fn wait_for_call(peer: &Peer) -> bool {
+        loop {
+            peer.conn_notify.notified().await;
+            if peer.removed.load(Ordering::Relaxed) {
+                return false;
+            }
+            let live = peer
+                .connection
+                .read()
+                .await
+                .as_ref()
+                .is_some_and(|c| c.close_reason().is_none());
+            if live {
+                info!("{} reconnected via incoming connection", peer.endpoint_id);
+                return true;
             }
         }
     }
