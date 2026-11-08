@@ -169,7 +169,7 @@ struct PeerList<Controls: View>: View {
                         .accessibilityIdentifier("port-\(port)")
                     }
                 } header: {
-                    PeerHeader(title: store.title(for: peer), online: peer.online)
+                    PeerHeader(title: store.title(for: peer), online: peer.online, asleep: peer.asleep)
                 }
             }
         }
@@ -198,6 +198,13 @@ struct PeerList<Controls: View>: View {
 struct PeerHeader: View {
     var title: String
     var online: Bool
+    /// It said goodbye and calls when it wakes
+    var asleep = false
+
+    private var status: String {
+        if online { return "online" }
+        return asleep ? "asleep" : "offline"
+    }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -206,7 +213,7 @@ struct PeerHeader: View {
                 .frame(width: 8, height: 8)
             Text(title)
             Spacer()
-            Text(online ? "online" : "offline")
+            Text(status)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

@@ -48,6 +48,26 @@ import Testing
         #expect(peer.pageURL(port: 80, byName: true)?.absoluteString == "http://127.0.1.2:80/")
     }
 
+    @Test func aPeerThatSaidGoodbyeIsAsleep() throws {
+        let reply = """
+        {"List":{"me":"m","peers":[\
+        {"key":"a","name":"phone","online":false,"asleep":true,"admission":"code","they_expose":[],"ip":null,"bound":[]},\
+        {"key":"b","name":"old","online":false,"admission":"code","they_expose":[],"ip":null,"bound":[]}\
+        ],"i_expose":[],"grants":[]}}
+        """
+        let peers = try DaemonClient.peers(fromListReply: Data(reply.utf8))
+        #expect(peers.first { $0.key == "a" }?.asleep == true)
+        // A daemon older than `asleep` leaves it out.
+        #expect(peers.first { $0.key == "b" }?.asleep == false)
+    }
+
+    @Test func aSleepReplyIsOkOrRefused() throws {
+        try DaemonClient.ok(fromReply: Data(#""Ok""#.utf8))
+        #expect(throws: DaemonError.refused("no")) {
+            try DaemonClient.ok(fromReply: Data(#"{"Error":"no"}"#.utf8))
+        }
+    }
+
     @Test func onlinePeersComeFirst() throws {
         let reply = """
         {"List":{"me":"m","peers":[\

@@ -5,6 +5,9 @@ public struct Peer: Identifiable, Hashable, Sendable {
     public var key: String
     public var name: String?
     public var online: Bool
+    /// It said goodbye and will call when it wakes, so the daemon is not
+    /// dialing it. False from a daemon older than `asleep`.
+    public var asleep: Bool
     /// Ports this peer exposes to us
     public var ports: [UInt16]
     /// The local address its ports are bound at, absent when not projected
@@ -19,6 +22,7 @@ public struct Peer: Identifiable, Hashable, Sendable {
         key: String,
         name: String? = nil,
         online: Bool = false,
+        asleep: Bool = false,
         ports: [UInt16] = [],
         ip: String? = nil,
         boundAt: [UInt16: String]? = nil
@@ -26,6 +30,7 @@ public struct Peer: Identifiable, Hashable, Sendable {
         self.key = key
         self.name = name
         self.online = online
+        self.asleep = asleep
         self.ports = ports
         self.ip = ip
         self.boundAt = boundAt
@@ -194,6 +199,23 @@ public struct DaemonClient: Sendable {
         try Self.peers(fromListReply: try await exchange("\"List\"\n"))
     }
 
+    /// Tell the process it is about to be suspended: it says goodbye to each
+    /// connected peer, so they stop dialing it, and dials no one itself. Peers
+    /// it said goodbye to wait for it to call, which it does once started
+    /// again. Returns within about a second.
+    public func sleep() async throws {
+        try Self.ok(fromReply: try await exchange("\"Sleep\"\n"))
+    }
+
+    /// Parse a reply that is `Ok` or an `Error`.
+    public static func ok(fromReply data: Data) throws {
+        if let text = String(data: data, encoding: .utf8), text == "\"Ok\"" { return }
+        let object = try jsonObject(data)
+        if let message = object["Error"] as? String { throw DaemonError.refused(message) }
+        if object["Ok"] != nil { return }
+        throw DaemonError.badResponse
+    }
+
     public func accept(handle: String, name: String?) async throws {
         let trimmed = handle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw DaemonError.refused("Paste or scan an invitation.") }
@@ -206,12 +228,7 @@ public struct DaemonClient: Sendable {
         let request = try JSONSerialization.data(withJSONObject: ["Accept": body])
         guard var line = String(data: request, encoding: .utf8) else { throw DaemonError.badResponse }
         line.append("\n")
-        let data = try await exchange(line)
-        if let text = String(data: data, encoding: .utf8), text == "\"Ok\"" { return }
-        let object = try Self.jsonObject(data)
-        if let message = object["Error"] as? String { throw DaemonError.refused(message) }
-        if object["Ok"] != nil { return }
-        throw DaemonError.badResponse
+        try Self.ok(fromReply: try await exchange(line))
     }
 
     /// A new one-time invitation, valid 5 minutes. `name` is what to call the
@@ -273,6 +290,7 @@ public struct DaemonClient: Sendable {
             key: key,
             name: row["name"] as? String,
             online: row["online"] as? Bool ?? false,
+            asleep: row["asleep"] as? Bool ?? false,
             ports: ports,
             ip: row["ip"] as? String,
             boundAt: boundAt
