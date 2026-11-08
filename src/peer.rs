@@ -10,6 +10,7 @@ use crate::core::dial::{self, Keep};
 use crate::core::session::{Action, Admission, ConnId, Refusal, Session};
 use crate::enroll::Pins;
 use crate::netstack::{Accept, NetStack};
+use crate::ports::{self, PortRecord, PortStore};
 use crate::protocol::{BoundAt, PeerInfo, PeerMessage, ALPN};
 use crate::surface::{self, Surface, SurfaceStore};
 use crate::tunnel::{self, PeerConnection};
@@ -112,6 +113,9 @@ pub struct PeerManager {
     pins: Pins,
     /// Projected surfaces, persisted across restarts
     surfaces: SurfaceStore,
+    /// The local number each peer port got at 127.0.0.1, persisted across
+    /// restarts. Used only when every peer binds there.
+    ports: PortStore,
     /// TUN owned-network backend. When present, surfaces bind on the TUN via a
     /// userspace stack instead of loopback (ADR 0005); None = loopback backend.
     netstack: Option<NetStack>,
@@ -122,9 +126,9 @@ pub struct PeerManager {
     /// listener state and the address it binds move together
     bind_lock: Mutex<()>,
     /// Bind every peer at 127.0.0.1 instead of a surface address of its own.
-    /// Each of a peer's ports then listens on that port number if it is free,
-    /// else on one the OS picks. True on iOS, where an app can add no address
-    /// and can bind only 127.0.0.1.
+    /// Each of a peer's ports then listens on the number it had before, else
+    /// its own number if free, else one the OS picks (see src/ports.rs). True
+    /// on iOS, where an app can add no address and can bind only 127.0.0.1.
     localhost_only: AtomicBool,
 }
 
@@ -136,8 +140,10 @@ impl PeerManager {
         session: Arc<std::sync::Mutex<Session>>,
         pins: Pins,
         surfaces: SurfaceStore,
+        ports: PortStore,
         netstack: Option<NetStack>,
         self_name: Option<String>,
+        localhost_only: bool,
     ) -> Self {
         Self {
             peers: DashMap::new(),
@@ -147,10 +153,11 @@ impl PeerManager {
             next_conn_id: AtomicU64::new(1),
             pins,
             surfaces,
+            ports,
             netstack,
             self_name,
             bind_lock: Mutex::new(()),
-            localhost_only: AtomicBool::new(cfg!(target_os = "ios")),
+            localhost_only: AtomicBool::new(localhost_only),
         }
     }
 
@@ -613,31 +620,18 @@ impl PeerManager {
             }
         }
 
+        if self.is_localhost_only() {
+            return self.bind_at_localhost_port(peer, ip, port).await;
+        }
+
         let addr = SocketAddr::from((ip, port));
         let mut last_err = None;
         for attempt in 0..BIND_ATTEMPTS {
             if attempt > 0 {
                 tokio::time::sleep(BIND_RETRY_DELAY).await;
             }
-            let mut bound = tunnel::bind_listener(addr).await;
-            // Every peer shares 127.0.0.1 here, so two peers can announce the
-            // same port. The second one listens wherever the OS puts it.
-            if bound.is_err() && self.is_localhost_only() {
-                bound = tunnel::bind_listener(SocketAddr::from((ip, 0))).await;
-            }
-            match bound {
-                Ok(listener) => {
-                    let at = listener.local_addr().unwrap_or(addr);
-                    let peer_clone = peer.clone();
-                    let task = tokio::spawn(async move {
-                        if let Err(e) = tunnel::serve_listener(listener, port, &peer_clone).await {
-                            error!("serving {} failed: {}", at, e);
-                        }
-                    });
-                    peer.bindings.insert(port, Binding { task, at });
-                    info!("bound {} for port {}", at, port);
-                    return;
-                }
+            match tunnel::bind_listener(addr).await {
+                Ok(listener) => return Self::serve(peer, port, listener, addr),
                 Err(e) => last_err = Some(e),
             }
         }
@@ -647,6 +641,120 @@ impl PeerManager {
             BIND_ATTEMPTS,
             last_err.map(|e| e.to_string()).unwrap_or_default()
         );
+    }
+
+    /// Bind one of a peer's ports at 127.0.0.1, where every peer shares the
+    /// address. The port listens on the number it had before, so a page keeps
+    /// its origin and with it its storage. That number is retried like any
+    /// other bind, since the last listener may still be closing, and only once
+    /// it stays taken does the port move to a number the OS picks. A port
+    /// binding for the first time tries its own number once, then moves.
+    async fn bind_at_localhost_port(&self, peer: &Arc<Peer>, ip: IpAddr, port: u16) {
+        let key = peer.endpoint_id.to_string();
+        let records = self.ports.load().unwrap_or_else(|e| {
+            warn!("failed to load ports: {}", e);
+            Vec::new()
+        });
+        let stored = ports::stored(&records, &key, port);
+        let wanted = ports::first_choice(&records, &key, port);
+
+        let mut last_err = None;
+        for attempt in 0..BIND_ATTEMPTS {
+            if attempt > 0 {
+                tokio::time::sleep(BIND_RETRY_DELAY).await;
+            }
+            if let Some(local) = wanted {
+                match tunnel::bind_listener(SocketAddr::from((ip, local))).await {
+                    Ok(listener) => return self.keep_local(peer, port, stored, listener),
+                    Err(e) => last_err = Some(e),
+                }
+            }
+            if stored.is_none() || attempt + 1 == BIND_ATTEMPTS {
+                match Self::bind_unheld(ip, &records, &key, port).await {
+                    Ok(listener) => return self.keep_local(peer, port, stored, listener),
+                    Err(e) => last_err = Some(e),
+                }
+            }
+        }
+        error!(
+            "failed to bind port {} of {} at {} after {} attempts: {}",
+            port,
+            peer.endpoint_id,
+            ip,
+            BIND_ATTEMPTS,
+            last_err.map(|e| e.to_string()).unwrap_or_default()
+        );
+    }
+
+    /// Serve a port bound at 127.0.0.1 and record its number when it is new.
+    fn keep_local(
+        &self,
+        peer: &Arc<Peer>,
+        port: u16,
+        stored: Option<u16>,
+        listener: tokio::net::TcpListener,
+    ) {
+        let at = match listener.local_addr() {
+            Ok(at) => at,
+            Err(e) => {
+                error!(
+                    "bound port {} of {} has no address: {}",
+                    port, peer.endpoint_id, e
+                );
+                return;
+            }
+        };
+        if stored != Some(at.port()) {
+            if let Some(before) = stored {
+                warn!(
+                    "port {} of {} moved from {} to {}",
+                    port,
+                    peer.endpoint_id,
+                    before,
+                    at.port()
+                );
+            }
+            let key = peer.endpoint_id.to_string();
+            if let Err(e) = self.ports.set(&key, port, at.port()) {
+                warn!("failed to persist port {} of {}: {}", port, key, e);
+            }
+        }
+        Self::serve(peer, port, listener, at);
+    }
+
+    /// A listener at `ip` on a number the OS picks that no other peer port
+    /// holds in the table. A number another port holds is passed over (and
+    /// kept open until the end, so the OS does not hand it out again).
+    async fn bind_unheld(
+        ip: IpAddr,
+        records: &[PortRecord],
+        key: &str,
+        port: u16,
+    ) -> Result<tokio::net::TcpListener> {
+        let mut passed_over = Vec::new();
+        for _ in 0..16 {
+            let listener = tunnel::bind_listener(SocketAddr::from((ip, 0))).await?;
+            let local = listener.local_addr()?.port();
+            if !ports::held_by_another(records, key, port, local) {
+                return Ok(listener);
+            }
+            passed_over.push(listener);
+        }
+        Err(anyhow!(
+            "every number the OS offered is held by another port"
+        ))
+    }
+
+    /// Serve a bound listener for the peer's `port` and record the binding.
+    fn serve(peer: &Arc<Peer>, port: u16, listener: tokio::net::TcpListener, at: SocketAddr) {
+        let peer_clone = peer.clone();
+        let task = tokio::spawn(async move {
+            if let Err(e) = tunnel::serve_listener(listener, port, &peer_clone).await {
+                error!("serving {} failed: {}", at, e);
+            }
+        });
+        peer.bindings.insert(port, Binding { task, at });
+        info!("bound {} for port {}", at, port);
     }
 
     /// Release one binding, waiting for its task to finish so the listener is
@@ -762,6 +870,9 @@ impl PeerManager {
         }
         if let Err(e) = self.surfaces.remove(&endpoint_id.to_string()) {
             warn!("failed to remove surface record for {}: {}", endpoint_id, e);
+        }
+        if let Err(e) = self.ports.remove_peer(&endpoint_id.to_string()) {
+            warn!("failed to remove port records for {}: {}", endpoint_id, e);
         }
 
         info!("evicted peer {} ({})", endpoint_id, reason);
@@ -1209,6 +1320,26 @@ impl PeerManager {
                 ip: record.ip,
                 name: record.name,
             });
+        }
+    }
+
+    /// Stop every peer's loop and close its listeners, leaving pins, surfaces
+    /// and ports on disk. A test restarting a daemon in the same process does
+    /// this first, the way the app's runtime going away does on iOS.
+    #[cfg(test)]
+    pub async fn stop(&self) {
+        let _guard = self.bind_lock.lock().await;
+        let peers: Vec<Arc<Peer>> = self.peers.iter().map(|e| e.value().clone()).collect();
+        for peer in peers {
+            peer.removed.store(true, Ordering::Relaxed);
+            peer.conn_notify.notify_one();
+            if let Some(conn) = peer.connection.write().await.take() {
+                conn.close(0u32.into(), b"stopped");
+            }
+            let ports: Vec<u16> = peer.bindings.iter().map(|e| *e.key()).collect();
+            for port in ports {
+                self.release_binding(&peer, port).await;
+            }
         }
     }
 

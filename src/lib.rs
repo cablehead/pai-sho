@@ -13,6 +13,7 @@ pub mod launchd;
 mod live_tests;
 pub mod netstack;
 pub mod peer;
+pub mod ports;
 pub mod protocol;
 pub mod qr;
 pub mod resolver;

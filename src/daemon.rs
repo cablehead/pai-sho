@@ -4,6 +4,7 @@ use crate::core::invite::{Handle, Invite};
 use crate::core::session::Session;
 use crate::enroll::Pins;
 use crate::peer::PeerManager;
+use crate::ports::PortStore;
 use crate::protocol::{GrantInfo, ListInfo, Request, Response, ALPN, VERSION};
 use crate::surface::SurfaceStore;
 use anyhow::{anyhow, Context, Result};
@@ -107,8 +108,9 @@ impl Daemon {
 
     /// Build a daemon on an endpoint the caller already bound. Tests use this
     /// to supply a loopback endpoint with relays disabled, so no code path
-    /// reaches the network. `state_prefix` is where pins and surfaces are
-    /// persisted: `<prefix>.peers.json` and `<prefix>.surfaces.json`.
+    /// reaches the network. `state_prefix` is where pins, surfaces and ports
+    /// are persisted: `<prefix>.peers.json`, `<prefix>.surfaces.json` and
+    /// `<prefix>.ports.json`.
     pub async fn with_endpoint(
         endpoint: Endpoint,
         host: IpAddr,
@@ -116,16 +118,47 @@ impl Daemon {
         netstack: Option<crate::netstack::NetStack>,
         name: Option<String>,
     ) -> Result<Arc<Self>> {
+        Self::assemble(
+            endpoint,
+            host,
+            state_prefix,
+            netstack,
+            name,
+            cfg!(target_os = "ios"),
+        )
+        .await
+    }
+
+    /// A test daemon that binds every peer at 127.0.0.1, as on iOS, from the
+    /// start: a peer it dials on load binds there too.
+    #[cfg(test)]
+    pub async fn with_endpoint_at_localhost(
+        endpoint: Endpoint,
+        host: IpAddr,
+        state_prefix: &Path,
+    ) -> Result<Arc<Self>> {
+        Self::assemble(endpoint, host, state_prefix, None, None, true).await
+    }
+
+    async fn assemble(
+        endpoint: Endpoint,
+        host: IpAddr,
+        state_prefix: &Path,
+        netstack: Option<crate::netstack::NetStack>,
+        name: Option<String>,
+        localhost_only: bool,
+    ) -> Result<Arc<Self>> {
         let key_path = state_prefix;
         let session = Arc::new(std::sync::Mutex::new(Session::new()));
 
-        // Pins and surfaces live next to the key: <key>.peers.json,
-        // <key>.surfaces.json
+        // Pins, surfaces and ports live next to the key: <key>.peers.json,
+        // <key>.surfaces.json, <key>.ports.json
         let pins = Pins::new(PathBuf::from(format!("{}.peers.json", key_path.display())));
         let surfaces = SurfaceStore::new(PathBuf::from(format!(
             "{}.surfaces.json",
             key_path.display()
         )));
+        let ports = PortStore::new(PathBuf::from(format!("{}.ports.json", key_path.display())));
         let pinned = pins.load()?;
 
         let daemon = Arc::new(Self {
@@ -135,8 +168,10 @@ impl Daemon {
                 session.clone(),
                 pins,
                 surfaces,
+                ports,
                 netstack,
                 name,
+                localhost_only,
             )),
             endpoint,
             session,

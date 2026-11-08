@@ -573,6 +573,41 @@ async fn sees_online(d: &TestDaemon, key: &str, name: &str) -> Option<()> {
     (p.online && p.name.as_deref() == Some(name)).then_some(())
 }
 
+/// Restart `d`: same key, same state directory, a fresh endpoint that can
+/// find `peers`. The old daemon's peers and listeners stop first, as they do
+/// when the app's runtime goes away.
+async fn restart(d: TestDaemon, peers: &[&TestDaemon], at_localhost: bool) -> TestDaemon {
+    let TestDaemon {
+        daemon,
+        _router,
+        _dir,
+    } = d;
+    let secret = daemon.endpoint().secret_key().clone();
+    daemon.peers().stop().await;
+    _router.shutdown().await.ok();
+    daemon.endpoint().close().await;
+    drop(daemon);
+
+    let lookup = MemoryLookup::new();
+    for peer in peers {
+        lookup.add_endpoint_info(addr_of(peer.daemon.endpoint()));
+    }
+    let endpoint = test_endpoint_with(&lookup, secret).await;
+    let host = IpAddr::V4(Ipv4Addr::LOCALHOST);
+    let daemon = if at_localhost {
+        Daemon::with_endpoint_at_localhost(endpoint, host, &_dir.prefix()).await
+    } else {
+        Daemon::with_endpoint(endpoint, host, &_dir.prefix(), None, None).await
+    }
+    .unwrap();
+    let router = daemon.spawn_router();
+    TestDaemon {
+        daemon,
+        _router: router,
+        _dir,
+    }
+}
+
 /// An iPhone app restarts on every update. The side that took up the
 /// invitation must still know the peer afterwards, and call it again.
 #[tokio::test]
@@ -582,35 +617,7 @@ async fn an_accepted_peer_survives_a_restart() {
     let (a_key, b_key) = (a.key(), b.key());
     until(20, || sees_online(&b, &a_key, "a")).await;
 
-    // Restart b: same key, same state directory, a fresh endpoint.
-    let TestDaemon {
-        daemon,
-        _router,
-        _dir,
-    } = b;
-    let secret = daemon.endpoint().secret_key().clone();
-    _router.shutdown().await.ok();
-    daemon.endpoint().close().await;
-    drop(daemon);
-
-    let lookup = MemoryLookup::new();
-    lookup.add_endpoint_info(addr_of(a.daemon.endpoint()));
-    let endpoint = test_endpoint_with(&lookup, secret).await;
-    let daemon = Daemon::with_endpoint(
-        endpoint,
-        IpAddr::V4(Ipv4Addr::LOCALHOST),
-        &_dir.prefix(),
-        None,
-        None,
-    )
-    .await
-    .unwrap();
-    let router = daemon.spawn_router();
-    let b = TestDaemon {
-        daemon,
-        _router: router,
-        _dir,
-    };
+    let b = restart(b, &[&a], false).await;
 
     until(20, || sees_online(&b, &a_key, "a")).await;
     until(20, || sees_online(&a, &b_key, "b")).await;
@@ -651,4 +658,69 @@ async fn a_severed_link_comes_back() {
         (&buf == b"after").then_some(())
     })
     .await;
+}
+
+/// Where `b` has bound `peer`'s `port`, once it has.
+async fn bound_addr_of(b: &TestDaemon, peer: &str, port: u16) -> SocketAddr {
+    until(20, || async {
+        let peers = b.daemon.peers().list().await;
+        let p = peers.iter().find(|p| p.key == peer)?;
+        let at = p.bound_at.iter().find(|b| b.port == port)?;
+        at.at.parse().ok()
+    })
+    .await
+}
+
+/// At 127.0.0.1 a page's origin is its local port number, and its storage
+/// goes with it. Two peers grant the same port to b, which binds every peer at
+/// 127.0.0.1 as on iOS. Each gets its own number, and each keeps that number
+/// after b restarts, whichever peer comes back first.
+#[tokio::test]
+async fn at_localhost_a_port_keeps_its_number_across_a_restart() {
+    // a and c forward to 127.0.0.2, so 127.0.0.1:port is free on b's side.
+    // Nothing answers there; this only checks where b listens.
+    let port = {
+        let probe = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        probe.local_addr().unwrap().port()
+    };
+    let host = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2));
+    let (lookup_a, lookup_b, lookup_c) = (
+        MemoryLookup::new(),
+        MemoryLookup::new(),
+        MemoryLookup::new(),
+    );
+    let a = TestDaemon::start("a", &lookup_a, host).await;
+    let c = TestDaemon::start("c", &lookup_c, host).await;
+    let b = TestDaemon::start("b", &lookup_b, host).await;
+    b.daemon.peers().bind_at_localhost();
+    for (x, lookup_x) in [(&a, &lookup_a), (&c, &lookup_c)] {
+        lookup_x.add_endpoint_info(addr_of(b.daemon.endpoint()));
+        lookup_b.add_endpoint_info(addr_of(x.daemon.endpoint()));
+    }
+    enroll(&a, &b, "b").await;
+    enroll(&c, &b, "b").await;
+
+    for x in [&a, &c] {
+        x.request(Request::Expose {
+            port,
+            to: vec![b.key()],
+            all: false,
+        })
+        .await;
+    }
+    let at_a = bound_addr_of(&b, &a.key(), port).await;
+    let at_c = bound_addr_of(&b, &c.key(), port).await;
+    assert_ne!(at_a, at_c);
+    assert!([at_a.port(), at_c.port()].contains(&port));
+
+    let b = restart(b, &[&a, &c], true).await;
+
+    assert_eq!(bound_addr_of(&b, &a.key(), port).await, at_a);
+    assert_eq!(bound_addr_of(&b, &c.key(), port).await, at_c);
+
+    // Forgetting a drops its number; c keeps its own.
+    b.request(Request::Forget { peer: a.key() }).await;
+    let table = std::fs::read_to_string(b._dir.0.join("key.ports.json")).unwrap();
+    assert!(!table.contains(&a.key()));
+    assert!(table.contains(&c.key()));
 }

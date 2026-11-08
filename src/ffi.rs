@@ -7,6 +7,7 @@ use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
+use std::time::Duration;
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
@@ -70,6 +71,9 @@ pub extern "C" fn pai_sho_start(
             if let Err(e) = result {
                 tracing::error!("pai_sho_start: {e}");
             }
+            // Close every listener before a new start can run, so a peer's
+            // port gets its number back rather than finding it still held.
+            runtime.shutdown_timeout(Duration::from_secs(1));
             RUNNING.store(false, Ordering::SeqCst);
         });
     match spawned {
