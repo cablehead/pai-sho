@@ -20,6 +20,11 @@ struct PaiShoApp: App {
     #if os(iOS)
     @Environment(\.scenePhase) private var phase
     @State private var wasInBackground = false
+    /// The process was running when the app went to the background, so it
+    /// starts again on return. A process the user stopped stays stopped.
+    @State private var resumeOnReturn = false
+    /// Saying goodbye and stopping, while the app is in the background
+    @State private var sleeping: Task<Void, Never>?
     @State private var process = InAppProcess()
     @State private var store = PeerStore(
         client: DaemonClient(socketPath: InAppProcess.socketName),
@@ -40,16 +45,28 @@ struct PaiShoApp: App {
                 ProcessSection(process: process, store: store)
             }
             .task { process.start() }
-            // iOS closes an app's listening sockets while it is in the
-            // background, so the ports pai-sho bound are dead on return.
-            // Start it again: saved peers redial and each port gets its
-            // saved number back.
+            // iOS suspends the app soon after it goes to the background, and
+            // closes its listening sockets. Before that, the process tells
+            // each peer goodbye, so they stop dialing a phone that cannot
+            // answer, and stops (ADR 0009). On return it starts again: saved
+            // peers redial, which wakes them, and each port gets its saved
+            // number back.
             .onChange(of: phase) { _, now in
-                if now == .background { wasInBackground = true }
+                if now == .background, !wasInBackground {
+                    wasInBackground = true
+                    resumeOnReturn = process.running
+                    if resumeOnReturn { sleeping = sleepInBackground() }
+                }
                 if now == .active, wasInBackground {
                     wasInBackground = false
+                    let slept = sleeping
+                    sleeping = nil
+                    guard resumeOnReturn else { return }
                     Task {
-                        await process.stop()
+                        await slept?.value
+                        // Ran out of background time before it stopped: its
+                        // ports are dead and it dials no one. Start afresh.
+                        if process.running { await process.stop() }
                         process.start()
                         await store.refresh()
                     }
@@ -73,6 +90,20 @@ struct PaiShoApp: App {
         #endif
     }
 
+    #if os(iOS)
+    /// Say goodbye to every peer and stop the process, inside a background
+    /// task so iOS lets it finish. The goodbye takes about a second at most.
+    private func sleepInBackground() -> Task<Void, Never> {
+        let background = BackgroundTask()
+        background.begin(name: "pai-sho goodbye")
+        return Task {
+            try? await store.client.sleep()
+            await process.stop()
+            background.end()
+        }
+    }
+    #endif
+
     private static var launchInvite: String? {
         UserDefaults.standard.string(forKey: "invite")
     }
@@ -83,6 +114,25 @@ struct PaiShoApp: App {
 }
 
 #if os(iOS)
+/// Time iOS gives the app to finish something after it goes to the
+/// background. When it runs out, iOS suspends the app anyway.
+@MainActor
+final class BackgroundTask {
+    private var id = UIBackgroundTaskIdentifier.invalid
+
+    func begin(name: String) {
+        id = UIApplication.shared.beginBackgroundTask(withName: name) { [weak self] in
+            self?.end()
+        }
+    }
+
+    func end() {
+        guard id != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(id)
+        id = .invalid
+    }
+}
+
 /// Start and Stop for the process running in this app.
 struct ProcessSection: View {
     let process: InAppProcess
