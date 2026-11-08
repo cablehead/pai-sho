@@ -103,6 +103,7 @@ public struct PortPage: View {
 
     public var body: some View {
         VStack(spacing: 0) {
+            #if os(macOS)
             Text(address(shown))
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
@@ -113,6 +114,7 @@ public struct PortPage: View {
                 .padding(.horizontal)
                 .padding(.vertical, 6)
             Divider()
+            #endif
             WebView(url: url, shown: $shown, failure: $failure, onTitle: onTitle)
                 .id(url)
                 .overlay {
@@ -125,14 +127,22 @@ public struct PortPage: View {
                         .background(.background)
                     }
                 }
+                #if os(iOS)
+                // On a phone the page is the point: it runs to the bottom
+                // edge, and the bar above keeps only the back button.
+                .ignoresSafeArea(.container, edges: .bottom)
+                #endif
         }
         .onChange(of: url) {
             shown = url
             failure = nil
         }
-        .navigationTitle(title)
         #if os(iOS)
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        #else
+        .navigationTitle(title)
         #endif
     }
 }
