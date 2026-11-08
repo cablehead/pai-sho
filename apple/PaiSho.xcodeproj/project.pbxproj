@@ -288,6 +288,8 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PaiSho/Info.plist;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				"ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES[sdk=iphoneos*]" = "AppIcon-Drawn AppIcon-Lotus AppIcon-Spirit";
+				"ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES[sdk=iphonesimulator*]" = "AppIcon-Drawn AppIcon-Lotus AppIcon-Spirit";
 				"INFOPLIST_FILE[sdk=macosx*]" = "PaiSho/Info-macOS.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -330,6 +332,8 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PaiSho/Info.plist;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				"ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES[sdk=iphoneos*]" = "AppIcon-Drawn AppIcon-Lotus AppIcon-Spirit";
+				"ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES[sdk=iphonesimulator*]" = "AppIcon-Drawn AppIcon-Lotus AppIcon-Spirit";
 				"INFOPLIST_FILE[sdk=macosx*]" = "PaiSho/Info-macOS.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

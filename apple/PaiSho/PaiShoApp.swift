@@ -98,8 +98,69 @@ struct ProcessSection: View {
                 }
             }
             .buttonStyle(.borderless)
+            IconRow()
         } header: {
             Text("This phone")
+        }
+    }
+}
+
+/// The home-screen icons the app carries. `name` is the alternate icon's
+/// asset name, nil for the main one.
+struct AppIconChoice: Identifiable {
+    let name: String?
+    let title: String
+    let preview: String
+    var id: String { preview }
+
+    static let all = [
+        AppIconChoice(name: nil, title: "Board", preview: "IconPreview-Board"),
+        AppIconChoice(name: "AppIcon-Drawn", title: "Drawn board", preview: "IconPreview-Drawn"),
+        AppIconChoice(name: "AppIcon-Lotus", title: "Lotus tile", preview: "IconPreview-Lotus"),
+        AppIconChoice(name: "AppIcon-Spirit", title: "Spirit", preview: "IconPreview-Spirit"),
+    ]
+}
+
+/// Pick the home-screen icon. iOS confirms each change with its own notice.
+struct IconRow: View {
+    @State private var current = UIApplication.shared.alternateIconName
+
+    private var chosen: AppIconChoice {
+        AppIconChoice.all.first { $0.name == current } ?? AppIconChoice.all[0]
+    }
+
+    var body: some View {
+        HStack {
+            Text("Icon")
+            Spacer()
+            Menu {
+                ForEach(AppIconChoice.all) { choice in
+                    Button {
+                        Task {
+                            try? await UIApplication.shared.setAlternateIconName(choice.name)
+                            current = UIApplication.shared.alternateIconName
+                        }
+                    } label: {
+                        Label {
+                            Text(choice.title)
+                        } icon: {
+                            Image(uiImage: (UIImage(named: choice.preview) ?? UIImage())
+                                .withRenderingMode(.alwaysOriginal))
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Text(chosen.title)
+                        .foregroundStyle(.secondary)
+                    Image(chosen.preview)
+                        .resizable()
+                        .interpolation(.none)
+                        .frame(width: 28, height: 28)
+                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                }
+            }
+            .accessibilityIdentifier("icon-menu")
         }
     }
 }
