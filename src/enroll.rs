@@ -77,6 +77,11 @@ pub struct Pin {
     /// What we call this peer locally. Absent until something names it.
     #[serde(default)]
     pub label: Option<String>,
+    /// We took up this peer's invitation, so we dial it. Kept so that after a
+    /// restart we call it again instead of waiting for a call that may never
+    /// come (an iPhone app restarts on every update).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dial: bool,
 }
 
 /// Pinned peers, persisted as JSON next to the daemon key
@@ -99,12 +104,24 @@ impl Pins {
             .with_context(|| format!("failed to parse {}", self.path.display()))
     }
 
+    /// Pin a peer that calls us. A peer we already dial keeps dialing.
     pub fn add(&self, key: &str, label: Option<&str>) -> Result<()> {
+        self.put(key, label, false)
+    }
+
+    /// Pin a peer whose invitation we took up: we dial it, after a restart too.
+    pub fn add_dialed(&self, key: &str, label: Option<&str>) -> Result<()> {
+        self.put(key, label, true)
+    }
+
+    fn put(&self, key: &str, label: Option<&str>, dial: bool) -> Result<()> {
         let mut pins = self.load()?;
+        let dial = dial || pins.iter().any(|p| p.key == key && p.dial);
         pins.retain(|p| p.key != key);
         pins.push(Pin {
             key: key.to_string(),
             label: label.map(|l| l.to_string()),
+            dial,
         });
         self.save(&pins)
     }
@@ -176,6 +193,22 @@ mod tests {
 
         pins.remove("k2").unwrap();
         assert_eq!(pins.load().unwrap().len(), 1);
+
+        // a peer whose invitation we took up stays dialed, even when it is
+        // pinned again later as a peer that calls us
+        pins.add_dialed("k3", Some("chunker")).unwrap();
+        pins.add("k3", Some("chunker")).unwrap();
+        let k3 = pins
+            .load()
+            .unwrap()
+            .into_iter()
+            .find(|p| p.key == "k3")
+            .unwrap();
+        assert!(k3.dial);
+        // and a pins file from before `dial` existed still loads
+        std::fs::write(dir.join("old.json"), r#"[{"key":"k9","label":null}]"#).unwrap();
+        let old = Pins::new(dir.join("old.json")).load().unwrap();
+        assert!(!old[0].dial);
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

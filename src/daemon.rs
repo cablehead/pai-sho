@@ -143,7 +143,12 @@ impl Daemon {
         });
 
         for pin in pinned {
-            if let Err(e) = daemon.peers.add_pinned(&pin.key, pin.label.as_deref()) {
+            let loaded = if pin.dial {
+                daemon.peers.add_dialed_pin(&pin.key, pin.label.as_deref())
+            } else {
+                daemon.peers.add_pinned(&pin.key, pin.label.as_deref())
+            };
+            if let Err(e) = loaded {
                 error!("failed to load pinned peer {}: {}", pin.key, e);
             }
         }

@@ -50,7 +50,12 @@ impl Drop for TempDir {
 /// An endpoint that cannot leave the machine: no relays, no address lookup
 /// beyond what we seed by hand, no port mapping.
 async fn test_endpoint(lookup: &MemoryLookup) -> Endpoint {
+    test_endpoint_with(lookup, iroh::SecretKey::generate()).await
+}
+
+async fn test_endpoint_with(lookup: &MemoryLookup, key: iroh::SecretKey) -> Endpoint {
     Endpoint::builder(presets::Minimal)
+        .secret_key(key)
         .relay_mode(RelayMode::Disabled)
         .portmapper_config(PortmapperConfig::Disabled)
         .clear_address_lookup()
@@ -557,6 +562,58 @@ async fn at_localhost_a_free_port_keeps_its_number() {
 
     let addr = bound_addr(&b, port).await;
     assert_eq!(addr, SocketAddr::from((Ipv4Addr::LOCALHOST, port)));
+}
+
+/// Whether `d` lists the peer `key` as online, under `name`.
+async fn sees_online(d: &TestDaemon, key: &str, name: &str) -> Option<()> {
+    let Response::List(list) = d.request(Request::List).await else {
+        return None;
+    };
+    let p = list.peers.iter().find(|p| p.key == key)?;
+    (p.online && p.name.as_deref() == Some(name)).then_some(())
+}
+
+/// An iPhone app restarts on every update. The side that took up the
+/// invitation must still know the peer afterwards, and call it again.
+#[tokio::test]
+async fn an_accepted_peer_survives_a_restart() {
+    let (a, b) = pair(IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
+    enroll(&a, &b, "b").await;
+    let (a_key, b_key) = (a.key(), b.key());
+    until(20, || sees_online(&b, &a_key, "a")).await;
+
+    // Restart b: same key, same state directory, a fresh endpoint.
+    let TestDaemon {
+        daemon,
+        _router,
+        _dir,
+    } = b;
+    let secret = daemon.endpoint().secret_key().clone();
+    _router.shutdown().await.ok();
+    daemon.endpoint().close().await;
+    drop(daemon);
+
+    let lookup = MemoryLookup::new();
+    lookup.add_endpoint_info(addr_of(a.daemon.endpoint()));
+    let endpoint = test_endpoint_with(&lookup, secret).await;
+    let daemon = Daemon::with_endpoint(
+        endpoint,
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        &_dir.prefix(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let router = daemon.spawn_router();
+    let b = TestDaemon {
+        daemon,
+        _router: router,
+        _dir,
+    };
+
+    until(20, || sees_online(&b, &a_key, "a")).await;
+    until(20, || sees_online(&a, &b_key, "b")).await;
 }
 
 /// Close the link and wait until a write succeeds again.

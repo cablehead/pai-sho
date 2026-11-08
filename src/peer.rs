@@ -187,7 +187,30 @@ impl PeerManager {
         if self.peers.contains_key(&endpoint_id) {
             return Err(anyhow!("peer already exists"));
         }
+        // Pin it first, so a restart dials it again rather than forgetting it.
+        self.pins
+            .add_dialed(&endpoint_id.to_string(), name.as_deref())?;
+        self.start_dialing(endpoint_id, name, code);
+        Ok(())
+    }
 
+    /// A peer whose invitation we took up before a restart: dial it again.
+    pub fn add_dialed_pin(self: &Arc<Self>, key: &str, name: Option<&str>) -> Result<()> {
+        let endpoint_id: EndpointId = key.parse().context("invalid key")?;
+        if self.peers.contains_key(&endpoint_id) {
+            return Ok(());
+        }
+        self.start_dialing(endpoint_id, name.map(|n| n.to_string()), None);
+        info!("dialing pinned peer {}", endpoint_id);
+        Ok(())
+    }
+
+    fn start_dialing(
+        self: &Arc<Self>,
+        endpoint_id: EndpointId,
+        name: Option<String>,
+        code: Option<String>,
+    ) {
         self.session
             .lock()
             .unwrap()
@@ -198,8 +221,6 @@ impl PeerManager {
         let peer = Peer::new(endpoint_id, name, true, code, None);
         self.peers.insert(endpoint_id, peer.clone());
         self.spawn_connection_loop(peer);
-
-        Ok(())
     }
 
     /// A peer loaded from a pin. Wait for them to call. After first contact
