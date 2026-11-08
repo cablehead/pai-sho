@@ -16,17 +16,19 @@
 	<string>0.5.4</string>
 	<key>CFBundleVersion</key>
 	<string>4</string>
-	<key>NSCameraUsageDescription</key>
-	<string>Scan a pai-sho invitation.</string>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Reach your peers directly when they are on the same network.</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<true/>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
-	<key>LSRequiresIPhoneOS</key>
-	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Scan a pai-sho invitation.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Reach your peers directly when they are on the same network.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>
