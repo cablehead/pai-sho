@@ -77,7 +77,11 @@ public struct PaiShoView<Controls: View>: View {
                 }
         } detail: {
             if let selection, let peer = store.peer(selection.peer) {
-                if let url = store.url(for: selection) {
+                // While the port is down (pai-sho restarting as the app comes
+                // back, or the peer reconnecting), keep the page as it was,
+                // at the address it comes back at.
+                let live = store.url(for: selection)
+                if let url = live ?? store.reached[selection] {
                     PortPage(
                         title: "\(store.title(for: peer)) : \(selection.port)",
                         url: url,
@@ -86,6 +90,12 @@ public struct PaiShoView<Controls: View>: View {
                     ) { shown in
                         peer.displayURL(shown, port: selection.port)
                     }
+                    .overlay(alignment: .top) {
+                        if live == nil {
+                            Reconnecting(to: store.title(for: peer))
+                        }
+                    }
+                    .animation(.default, value: live == nil)
                 } else {
                     ContentUnavailableView(
                         "Not reachable yet",
@@ -221,6 +231,26 @@ struct PeerHeader: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+    }
+}
+
+/// A small note over a page whose port is down for now.
+struct Reconnecting: View {
+    var to: String
+    init(to: String) { self.to = to }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Reconnecting to \(to)...")
+                .font(.footnote)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(.regularMaterial, in: Capsule())
+        .padding(.top, 8)
+        .transition(.move(edge: .top).combined(with: .opacity))
     }
 }
 

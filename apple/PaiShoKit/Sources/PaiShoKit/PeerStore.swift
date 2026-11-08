@@ -109,6 +109,7 @@ public final class PeerStore {
             problem = nil
             if next != peers { peers = next }
             rememberKnown(next)
+            noteReached()
         } catch {
             loadedOnce = true
             reachable = false
@@ -127,6 +128,20 @@ public final class PeerStore {
 
     public func peer(_ key: String) -> Peer? {
         peers.first { $0.key == key }
+    }
+
+    /// Each port's page address, as last reached. A port keeps its local
+    /// number across restarts, so the page there comes back at the same
+    /// address once the port is bound again.
+    public private(set) var reached: [PortID: URL] = [:]
+
+    private func noteReached() {
+        for peer in peers {
+            for port in peer.ports {
+                let id = PortID(peer: peer.key, port: port)
+                if let url = url(for: id), reached[id] != url { reached[id] = url }
+            }
+        }
     }
 
     public func url(for id: PortID) -> URL? {

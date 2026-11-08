@@ -42,6 +42,12 @@ final class PageSwipe: NSObject, UIGestureRecognizerDelegate {
         view.scrollView.panGestureRecognizer.require(toFail: drag)
         // A look at the page as a touch lands, before a tap navigates away.
         view.addGestureRecognizer(TouchDown { [weak self] in self?.remember() })
+        // A page that opens a view with history.pushState keeps its address
+        // (n2 going into a card does), so the address never changes. This
+        // tells the app as the page pushes, before the new view is drawn.
+        let content = view.configuration.userContentController
+        content.addUserScript(WKUserScript(source: Self.pushWatch, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        content.add(Relay(self), name: Self.pushMessage)
         watches = [
             view.observe(\.canGoBack) { [weak self] _, _ in MainActor.assumeIsolated { self?.gate() } },
             view.observe(\.url) { [weak self] _, _ in MainActor.assumeIsolated { self?.moved() } },
@@ -154,6 +160,27 @@ final class PageSwipe: NSObject, UIGestureRecognizerDelegate {
         }
     }
 
+    static let pushMessage = "paishoPushed"
+    static let pushWatch = """
+    (() => {
+      const push = history.pushState;
+      history.pushState = function (...args) {
+        try { webkit.messageHandlers.\(pushMessage).postMessage(1) } catch (e) {}
+        return push.apply(this, args);
+      };
+    })();
+    """
+
+    /// The page pushed a view of its own. It hasn't drawn it yet, so this
+    /// covers the page as it is, then slides the new view in.
+    fileprivate func pushed() {
+        guard let view, !swiping, leaving == nil, coming == nil, let now = look(of: view) else { return }
+        let cover = backed(now, in: view)
+        view.addSubview(cover)
+        leaving = cover
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { self.slideIn(over: cover) }
+    }
+
     /// The page moved in its history. One a tap opened slides in from the
     /// right over the page it came from, as a push does.
     private func moved() {
@@ -176,16 +203,22 @@ final class PageSwipe: NSObject, UIGestureRecognizerDelegate {
             self.lastDepth = depth
             guard let cover, self.leaving === cover else { return }
             guard pushed else { self.clear(); return }
-            let width = view.bounds.width
-            let incoming = self.backed(self.look(of: view), in: view)
-            self.shade(incoming)
-            view.addSubview(incoming)
-            self.coming = incoming
-            self.place(isBack: false, pulled: 0, width: width)
-            UIView.animate(withDuration: 0.35, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0) {
-                self.place(isBack: false, pulled: width, width: width)
-            } completion: { _ in self.clear() }
+            self.slideIn(over: cover)
         }
+    }
+
+    /// Slide the page as it is now in from the right, over `cover`.
+    private func slideIn(over cover: UIView) {
+        guard let view, leaving === cover else { return }
+        let width = view.bounds.width
+        let incoming = backed(look(of: view), in: view)
+        shade(incoming)
+        view.addSubview(incoming)
+        coming = incoming
+        place(isBack: false, pulled: 0, width: width)
+        UIView.animate(withDuration: 0.35, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0) {
+            self.place(isBack: false, pulled: width, width: width)
+        } completion: { _ in self.clear() }
     }
 
     /// The page as it is on screen: its scroll view, without any snapshot
@@ -246,6 +279,16 @@ final class PageSwipe: NSObject, UIGestureRecognizerDelegate {
             box.addSubview(shot)
         }
         return box
+    }
+}
+
+/// Passes the page's push message on, without the content controller
+/// holding the swipe (it keeps its handlers alive).
+private final class Relay: NSObject, WKScriptMessageHandler {
+    weak var swipe: PageSwipe?
+    init(_ swipe: PageSwipe) { self.swipe = swipe }
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        MainActor.assumeIsolated { swipe?.pushed() }
     }
 }
 

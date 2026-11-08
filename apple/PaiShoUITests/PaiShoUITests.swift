@@ -101,6 +101,41 @@ final class PaiShoUITests: XCTestCase {
         attach(app, "main-screen")
     }
 
+    /// Back from the background, the page stays on screen while pai-sho
+    /// restarts and its port comes back, rather than a "not reachable"
+    /// screen in its place.
+    func testReturnKeepsThePage() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let invite = env["PAI_SHO_INVITE"], let port = env["PAI_SHO_PORT"],
+              let expect = env["PAI_SHO_EXPECT"]
+        else { throw XCTSkip("set TEST_RUNNER_PAI_SHO_INVITE, _PORT and _EXPECT") }
+
+        let app = XCUIApplication()
+        app.launchArguments = ["-invite", invite]
+        app.launch()
+        let name = app.textFields["name"]
+        if name.waitForExistence(timeout: 10) {
+            name.tap()
+            name.typeText("mac")
+            app.buttons["Accept"].tap()
+        }
+        let row = app.buttons["port-\(port)"]
+        XCTAssertTrue(row.waitForExistence(timeout: 60), "port \(port) never listed")
+        row.tap()
+        XCTAssertTrue(app.webViews.staticTexts[expect].waitForExistence(timeout: 30))
+
+        XCUIDevice.shared.press(.home)
+        sleep(4)
+        app.activate()
+        attach(app, "back")
+        XCTAssertFalse(app.staticTexts["Not reachable yet"].exists, "the page was replaced")
+        XCTAssertTrue(app.webViews.firstMatch.exists, "the page is gone")
+        sleep(1)
+        attach(app, "back-1s")
+        XCTAssertTrue(app.webViews.staticTexts[expect].waitForExistence(timeout: 30))
+        attach(app, "back-later")
+    }
+
     private func nudgeFromLeftEdge(_ app: XCUIApplication, to x: CGFloat = 0.15, hold: TimeInterval = 0.3) {
         let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
         let end = app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: 0.5))
