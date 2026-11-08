@@ -126,3 +126,40 @@ import Testing
         #expect(peer(nil).displayAddress(port: 8080) == "abcdefgh.pai-sho:8080")
     }
 }
+
+@Suite struct CertificateTrust {
+    let opened = URL(string: "http://mac.localhost:52311/")!
+    let serverTrust = NSURLAuthenticationMethodServerTrust
+
+    @Test func theAddressTheAppOpenedIsTrusted() {
+        #expect(Peer.trustsCertificate(method: serverTrust, host: "mac.localhost", port: 52311, opened: opened))
+        #expect(Peer.trustsCertificate(method: serverTrust, host: "MAC.localhost", port: 52311, opened: opened))
+    }
+
+    @Test func anotherHostIsNotTrusted() {
+        #expect(!Peer.trustsCertificate(method: serverTrust, host: "linux.localhost", port: 52311, opened: opened))
+        #expect(!Peer.trustsCertificate(method: serverTrust, host: "127.0.0.1", port: 52311, opened: opened))
+        #expect(!Peer.trustsCertificate(method: serverTrust, host: "localhost", port: 52311, opened: opened))
+    }
+
+    @Test func anotherPortIsNotTrusted() {
+        #expect(!Peer.trustsCertificate(method: serverTrust, host: "mac.localhost", port: 52312, opened: opened))
+        #expect(!Peer.trustsCertificate(method: serverTrust, host: "mac.localhost", port: 443, opened: opened))
+    }
+
+    @Test func aSubresourceOnAnotherHostIsNotTrusted() {
+        #expect(!Peer.trustsCertificate(method: serverTrust, host: "cdn.example.com", port: 443, opened: opened))
+    }
+
+    @Test func aPageOpenedByNameIsNotTrusted() throws {
+        // A Mac reaches mac.pai-sho through DNS, so its certificate is checked.
+        let byName = try #require(URL(string: "http://mac.pai-sho:3042/"))
+        #expect(!Peer.trustsCertificate(method: serverTrust, host: "mac.pai-sho", port: 3042, opened: byName))
+    }
+
+    @Test func onlyServerTrustIsAnswered() {
+        #expect(!Peer.trustsCertificate(
+            method: NSURLAuthenticationMethodHTTPBasic, host: "mac.localhost", port: 52311, opened: opened
+        ))
+    }
+}

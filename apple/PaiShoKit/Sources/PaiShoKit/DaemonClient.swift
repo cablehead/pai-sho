@@ -107,6 +107,22 @@ public struct Peer: Identifiable, Hashable, Sendable {
         return "\(scheme)://\(displayAddress(port: port))\(path)"
     }
 
+    /// Whether to accept a server's certificate without checking it, for a
+    /// challenge at `host:port`. Only the address the app opened a peer's page
+    /// at, a `.localhost` name, qualifies. The bytes to it travel over
+    /// pai-sho's encrypted link to a known peer key, so checking that the
+    /// certificate names this address adds nothing. A certificate anywhere
+    /// else, a page's subresources on other hosts included, is checked as
+    /// usual.
+    public static func trustsCertificate(method: String, host: String, port: Int, opened: URL) -> Bool {
+        guard method == NSURLAuthenticationMethodServerTrust,
+              let openedHost = opened.host?.lowercased(),
+              openedHost.hasSuffix(".localhost"),
+              let openedPort = opened.port
+        else { return false }
+        return host.lowercased() == openedHost && port == openedPort
+    }
+
     /// A port's page opens over http first: the app cannot tell from the
     /// port whether the peer serves TLS. When http fails, the page is tried
     /// once more at this address, over https.

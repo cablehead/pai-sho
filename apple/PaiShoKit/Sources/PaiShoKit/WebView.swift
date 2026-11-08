@@ -27,6 +27,23 @@ struct WebView: PlatformViewRepresentable {
             failed(view, error)
         }
 
+        /// A peer's page served over https carries a certificate for some
+        /// other name, or from a CA the phone does not trust. It is accepted at
+        /// the one address this view opened, and nowhere else.
+        func webView(_ view: WKWebView, respondTo challenge: URLAuthenticationChallenge) async
+            -> (URLSession.AuthChallengeDisposition, URLCredential?)
+        {
+            let space = challenge.protectionSpace
+            guard Peer.trustsCertificate(
+                method: space.authenticationMethod,
+                host: space.host,
+                port: space.port,
+                opened: parent.url
+            ), let trust = space.serverTrust
+            else { return (.performDefaultHandling, nil) }
+            return (.useCredential, URLCredential(trust: trust))
+        }
+
         private func failed(_ view: WKWebView, _ error: Error) {
             let error = error as NSError
             if error.domain == NSURLErrorDomain, error.code == NSURLErrorCancelled { return }
