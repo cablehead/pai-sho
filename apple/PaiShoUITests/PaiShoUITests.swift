@@ -77,11 +77,14 @@ final class PaiShoUITests: XCTestCase {
         attach(app, "board-thread")
 
         // Pulled partway within the page and let go: it stays where it was.
-        let here = app.webViews.firstMatch.screenshot().pngRepresentation
+        let before = app.webViews.firstMatch.frame
         nudgeFromLeftEdge(app, to: 0.3, hold: 2)
         sleep(1)
         attach(app, "after-page-nudge")
-        XCTAssertEqual(app.webViews.firstMatch.screenshot().pngRepresentation, here, "a short pull moved the page")
+        // A live page changes by itself (n2's timer), so compare where it
+        // sits, not its pixels.
+        XCTAssertEqual(app.webViews.firstMatch.frame, before, "a short pull moved the page")
+        XCTAssertFalse(row.isHittable, "a short pull left the page")
 
         // From the middle of the screen, not the edge.
         swipeFromLeftEdge(app, from: 0.3)

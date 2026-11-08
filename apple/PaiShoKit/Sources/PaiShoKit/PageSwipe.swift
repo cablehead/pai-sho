@@ -8,7 +8,9 @@ import WebKit
 /// let go early and it falls back. Swiping right shows the page you came from
 /// underneath, from a snapshot taken while you were on it. With no history
 /// left, the navigation's own swipe slides the page away to the main screen.
-/// A tap that opens a new page slides it in from the right, as a push does.
+/// A tap that opens a new page (a new address) slides it in from the right,
+/// as a push does. A page that changes views in place, as n2 does, slides
+/// them itself.
 ///
 /// WebKit's own swipe (`allowsBackForwardNavigationGestures`) never began
 /// here, inside SwiftUI's navigation, so the slide is done by hand.
@@ -42,12 +44,6 @@ final class PageSwipe: NSObject, UIGestureRecognizerDelegate {
         view.scrollView.panGestureRecognizer.require(toFail: drag)
         // A look at the page as a touch lands, before a tap navigates away.
         view.addGestureRecognizer(TouchDown { [weak self] in self?.remember() })
-        // A page that opens a view with history.pushState keeps its address
-        // (n2 going into a card does), so the address never changes. This
-        // tells the app as the page pushes, before the new view is drawn.
-        let content = view.configuration.userContentController
-        content.addUserScript(WKUserScript(source: Self.pushWatch, injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        content.add(Relay(self), name: Self.pushMessage)
         watches = [
             view.observe(\.canGoBack) { [weak self] _, _ in MainActor.assumeIsolated { self?.gate() } },
             view.observe(\.url) { [weak self] _, _ in MainActor.assumeIsolated { self?.moved() } },
@@ -150,7 +146,11 @@ final class PageSwipe: NSObject, UIGestureRecognizerDelegate {
         case .ended, .cancelled, .failed:
             let speed = pan.velocity(in: view).x * (isBack ? 1 : -1)
             let go = pan.state == .ended && (pulled > width * 0.35 || speed > 600) && speed > -200
-            UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0) {
+            // Heavy: the page carries the finger's speed on, then settles
+            // slowly, rather than snapping to rest.
+            let left = (go ? width : 0) - pulled
+            let carry = abs(left) > 1 ? max(0, speed * (left > 0 ? 1 : -1)) / abs(left) : 0
+            UIView.animate(withDuration: 0.55, delay: 0, usingSpringWithDamping: 0.95, initialSpringVelocity: carry) {
                 self.place(isBack: isBack, pulled: go ? width : 0, width: width)
             } completion: { _ in
                 if go { self.land(isBack: isBack) } else { self.clear() }
@@ -158,27 +158,6 @@ final class PageSwipe: NSObject, UIGestureRecognizerDelegate {
         default:
             break
         }
-    }
-
-    static let pushMessage = "paishoPushed"
-    static let pushWatch = """
-    (() => {
-      const push = history.pushState;
-      history.pushState = function (...args) {
-        try { webkit.messageHandlers.\(pushMessage).postMessage(1) } catch (e) {}
-        return push.apply(this, args);
-      };
-    })();
-    """
-
-    /// The page pushed a view of its own. It hasn't drawn it yet, so this
-    /// covers the page as it is, then slides the new view in.
-    fileprivate func pushed() {
-        guard let view, !swiping, leaving == nil, coming == nil, let now = look(of: view) else { return }
-        let cover = backed(now, in: view)
-        view.addSubview(cover)
-        leaving = cover
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { self.slideIn(over: cover) }
     }
 
     /// The page moved in its history. One a tap opened slides in from the
@@ -216,7 +195,7 @@ final class PageSwipe: NSObject, UIGestureRecognizerDelegate {
         view.addSubview(incoming)
         coming = incoming
         place(isBack: false, pulled: 0, width: width)
-        UIView.animate(withDuration: 0.35, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0) {
+        UIView.animate(withDuration: 0.45, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0) {
             self.place(isBack: false, pulled: width, width: width)
         } completion: { _ in self.clear() }
     }
@@ -254,7 +233,9 @@ final class PageSwipe: NSObject, UIGestureRecognizerDelegate {
         coming?.layer.shadowOpacity = 0
         swiping = true
         if isBack { view.goBack() } else { view.goForward() }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+        // Long enough for a page that slides its own views (n2, 420ms) to
+        // finish underneath.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             self.swiping = false
             UIView.animate(withDuration: 0.15) { self.coming?.alpha = 0 } completion: { _ in self.clear() }
         }
@@ -279,16 +260,6 @@ final class PageSwipe: NSObject, UIGestureRecognizerDelegate {
             box.addSubview(shot)
         }
         return box
-    }
-}
-
-/// Passes the page's push message on, without the content controller
-/// holding the swipe (it keeps its handlers alive).
-private final class Relay: NSObject, WKScriptMessageHandler {
-    weak var swipe: PageSwipe?
-    init(_ swipe: PageSwipe) { self.swipe = swipe }
-    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        MainActor.assumeIsolated { swipe?.pushed() }
     }
 }
 
