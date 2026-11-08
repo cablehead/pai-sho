@@ -18,6 +18,8 @@ import SwiftUI
 @main
 struct PaiShoApp: App {
     #if os(iOS)
+    @Environment(\.scenePhase) private var phase
+    @State private var wasInBackground = false
     @State private var process = InAppProcess()
     @State private var store = PeerStore(
         client: DaemonClient(socketPath: InAppProcess.socketName),
@@ -38,6 +40,21 @@ struct PaiShoApp: App {
                 ProcessSection(process: process, store: store)
             }
             .task { process.start() }
+            // iOS closes an app's listening sockets while it is in the
+            // background, so the ports pai-sho bound are dead on return.
+            // Start it again: saved peers redial and each port gets its
+            // saved number back.
+            .onChange(of: phase) { _, now in
+                if now == .background { wasInBackground = true }
+                if now == .active, wasInBackground {
+                    wasInBackground = false
+                    Task {
+                        await process.stop()
+                        process.start()
+                        await store.refresh()
+                    }
+                }
+            }
             #else
             PaiShoView(
                 store: store,

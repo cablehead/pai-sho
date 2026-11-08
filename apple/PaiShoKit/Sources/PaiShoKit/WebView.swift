@@ -13,11 +13,16 @@ struct WebView: PlatformViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate {
         var loaded: URL?
         var parent: WebView
+        /// Retries left while nothing is listening yet: on iPhone, pai-sho
+        /// is still binding its ports again after the app comes back.
+        var retries = Coordinator.maxRetries
+        static let maxRetries = 10
 
         init(_ parent: WebView) { self.parent = parent }
 
         func webView(_ view: WKWebView, didFinish navigation: WKNavigation!) {
             parent.failure = nil
+            retries = Coordinator.maxRetries
             if let title = view.title, !title.isEmpty { parent.onTitle(title) }
         }
 
@@ -46,9 +51,25 @@ struct WebView: PlatformViewRepresentable {
             return (.useCredential, URLCredential(trust: trust))
         }
 
+        /// The local port refused or dropped the connection: nothing is
+        /// listening there right now.
+        static func nothingListening(_ error: NSError) -> Bool {
+            error.domain == NSURLErrorDomain
+                && [NSURLErrorCannotConnectToHost, NSURLErrorNetworkConnectionLost].contains(error.code)
+        }
+
         private func failed(_ view: WKWebView, _ error: Error) {
             let error = error as NSError
             if error.domain == NSURLErrorDomain, error.code == NSURLErrorCancelled { return }
+            if Coordinator.nothingListening(error), retries > 0 {
+                retries -= 1
+                let url = parent.url
+                parent.shown = url
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak view] in
+                    view?.load(URLRequest(url: url))
+                }
+                return
+            }
             if parent.shown == parent.url, let secure = Peer.secureRetry(for: parent.url) {
                 parent.shown = secure
                 view.load(URLRequest(url: secure))
@@ -59,6 +80,7 @@ struct WebView: PlatformViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
+
 
     func makeView(context: Context) -> WKWebView {
         let view = WKWebView()
@@ -80,6 +102,7 @@ struct WebView: PlatformViewRepresentable {
         context.coordinator.parent = self
         guard context.coordinator.loaded != url else { return }
         context.coordinator.loaded = url
+        context.coordinator.retries = Coordinator.maxRetries
         view.load(URLRequest(url: url))
     }
 }
