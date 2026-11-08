@@ -59,22 +59,25 @@ struct WebView: PlatformViewRepresentable {
     }
 }
 
-/// The chosen port's page, with its address above it.
+/// The chosen port's page, with its address above it. `address` turns the
+/// URL that is loading into what to show; by default, the URL itself.
 public struct PortPage: View {
     var title: String
     var url: URL
+    var address: (URL) -> String
     @State private var shown: URL
     @State private var failure: String?
 
-    public init(title: String, url: URL) {
+    public init(title: String, url: URL, address: @escaping (URL) -> String = { $0.absoluteString }) {
         self.title = title
         self.url = url
+        self.address = address
         _shown = State(initialValue: url)
     }
 
     public var body: some View {
         VStack(spacing: 0) {
-            Text(shown.absoluteString)
+            Text(address(shown))
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
                 .lineLimit(1)

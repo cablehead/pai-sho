@@ -78,7 +78,9 @@ public struct PaiShoView<Controls: View>: View {
         } detail: {
             if let selection, let peer = store.peer(selection.peer) {
                 if let url = store.url(for: selection) {
-                    PortPage(title: "\(store.title(for: peer)) : \(selection.port)", url: url)
+                    PortPage(title: "\(store.title(for: peer)) : \(selection.port)", url: url) { shown in
+                        peer.displayURL(shown, port: selection.port)
+                    }
                 } else {
                     ContentUnavailableView(
                         "Not reachable yet",

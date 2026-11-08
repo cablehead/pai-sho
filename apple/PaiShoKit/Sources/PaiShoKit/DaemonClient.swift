@@ -44,14 +44,67 @@ public struct Peer: Identifiable, Hashable, Sendable {
     }
 
     /// The page for `port`. `byName` opens `<name>.pai-sho`, which needs the
-    /// daemon's resolver (a Mac). Otherwise the page opens at the address the
-    /// port is bound at, which is what an iOS app has.
-    public func pageURL(port: UInt16, byName: Bool) -> URL? {
+    /// daemon's resolver (a Mac). Otherwise the page opens where the port is
+    /// bound, which is what an iOS app has. A port bound at 127.0.0.1 opens as
+    /// `<label>.localhost`, which reaches the same listener: WebKit sends any
+    /// `.localhost` name to loopback, and treats each name as a site of its
+    /// own, so peers sharing 127.0.0.1 do not share cookies. App Transport
+    /// Security refuses these names, http and https alike, unless the app's
+    /// Info.plist makes `localhost` and its subdomains an exception, as the
+    /// iOS app's does. `label` defaults to `hostLabel`.
+    public func pageURL(port: UInt16, byName: Bool, label: String? = nil) -> URL? {
         if byName, let name, !name.isEmpty, let url = URL(string: "http://\(name).pai-sho:\(port)/") {
             return url
         }
         guard let address = address(port: port) else { return nil }
+        if let colon = address.lastIndex(of: ":"), address[..<colon] == "127.0.0.1" {
+            let local = address[address.index(after: colon)...]
+            return URL(string: "http://\(label ?? hostLabel).localhost:\(local)/")
+        }
         return URL(string: "http://\(address)/")
+    }
+
+    /// This peer's name as one DNS label: lowercase letters, digits and
+    /// hyphens. A name with none of those falls back to the start of the key.
+    public var hostLabel: String {
+        Self.label(name ?? "") ?? Self.label(String(key.prefix(8))) ?? "peer"
+    }
+
+    /// `hostLabel`, with the start of the key added when another of `peers`
+    /// has the same label, so that no two peers share a site.
+    public func hostLabel(among peers: [Peer]) -> String {
+        let mine = hostLabel
+        guard peers.contains(where: { $0.key != key && $0.hostLabel == mine }) else { return mine }
+        return Self.label("\(mine)-\(key.prefix(8))") ?? mine
+    }
+
+    private static func label(_ text: String) -> String? {
+        let folded = text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+        var out = ""
+        for scalar in folded.unicodeScalars {
+            if scalar.isASCII, CharacterSet.alphanumerics.contains(scalar) {
+                out.unicodeScalars.append(scalar)
+            } else if !out.isEmpty, !out.hasSuffix("-") {
+                out.append("-")
+            }
+        }
+        out = String(out.prefix(63))
+        while out.hasSuffix("-") { out.removeLast() }
+        return out.isEmpty ? nil : out.lowercased()
+    }
+
+    /// What to show as the address of the page for `port`: `<name>.pai-sho`
+    /// and the peer's own port number, whatever local address it opened at.
+    public func displayAddress(port: UInt16) -> String {
+        "\(title).pai-sho:\(port)"
+    }
+
+    /// `shown`, the page loading for `port`, as the user should read it: its
+    /// scheme and path at `displayAddress`.
+    public func displayURL(_ shown: URL, port: UInt16) -> String {
+        let scheme = shown.scheme ?? "http"
+        let path = shown.path.isEmpty ? "/" : shown.path
+        return "\(scheme)://\(displayAddress(port: port))\(path)"
     }
 
     /// A port's page opens over http first: the app cannot tell from the

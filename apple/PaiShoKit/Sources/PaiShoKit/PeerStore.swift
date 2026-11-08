@@ -53,7 +53,8 @@ public final class PeerStore {
     }
 
     public func url(for id: PortID) -> URL? {
-        peer(id.peer)?.pageURL(port: id.port, byName: opensByName)
+        guard let peer = peer(id.peer) else { return nil }
+        return peer.pageURL(port: id.port, byName: opensByName, label: peer.hostLabel(among: peers))
     }
 
     /// The peer's title, with the start of its key when another peer has the
