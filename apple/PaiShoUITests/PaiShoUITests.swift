@@ -139,6 +139,32 @@ final class PaiShoUITests: XCTestCase {
         attach(app, "back-later")
     }
 
+    /// A link that opens a new tab (n2's card links do) opens the peer's
+    /// page in place, rather than nothing happening.
+    func testNewTabLinkOpensHere() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let invite = env["PAI_SHO_INVITE"], let port = env["PAI_SHO_PORT"],
+              let expect = env["PAI_SHO_EXPECT"]
+        else { throw XCTSkip("set TEST_RUNNER_PAI_SHO_INVITE, _PORT and _EXPECT") }
+
+        let app = XCUIApplication()
+        app.launchArguments = ["-invite", invite]
+        app.launch()
+        let name = app.textFields["name"]
+        if name.waitForExistence(timeout: 10) {
+            name.tap()
+            name.typeText("mac")
+            app.buttons["Accept"].tap()
+        }
+        let row = app.buttons["port-\(port)"]
+        XCTAssertTrue(row.waitForExistence(timeout: 60), "port \(port) never listed")
+        row.tap()
+        XCTAssertTrue(app.webViews.staticTexts[expect].waitForExistence(timeout: 30))
+        app.webViews.links["new tab"].tap()
+        XCTAssertTrue(app.webViews.staticTexts["opened in place"].waitForExistence(timeout: 10), "the link did nothing")
+        attach(app, "opened")
+    }
+
     private func nudgeFromLeftEdge(_ app: XCUIApplication, to x: CGFloat = 0.15, hold: TimeInterval = 0.3) {
         let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
         let end = app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: 0.5))

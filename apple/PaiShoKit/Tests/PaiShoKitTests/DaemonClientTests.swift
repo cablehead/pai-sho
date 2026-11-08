@@ -250,4 +250,14 @@ import Testing
         #expect(shown.map(\.ports) == [[3042, 3043], [8080], []])
         #expect(shown[0].address(port: 3042) == nil)
     }
+
+    /// A link that opens a new tab opens a peer's page in place, and
+    /// anything else in the system browser.
+    @Test func aNewTabLinkToAPeerOpensHere() {
+        let board = URL(string: "http://chunker.localhost:3042/#t-1793")
+        #expect(WebView.Coordinator.opensHere(URL(string: "http://chunker.localhost:3042/local/web-push/")!, from: board))
+        #expect(WebView.Coordinator.opensHere(URL(string: "http://hermes.localhost:3043/")!, from: board))
+        #expect(WebView.Coordinator.opensHere(URL(string: "https://chunker.pai-sho:3042/")!, from: nil))
+        #expect(!WebView.Coordinator.opensHere(URL(string: "https://github.com/cablehead")!, from: board))
+    }
 }

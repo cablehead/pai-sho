@@ -13,7 +13,7 @@ struct WebView: PlatformViewRepresentable {
     /// navigation's own swipe leaves the page (PageSwipe).
     var onLeave: () -> Void = {}
 
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         var loaded: URL?
         var parent: WebView
         /// Retries left while nothing is listening yet: on iPhone, pai-sho
@@ -64,6 +64,39 @@ struct WebView: PlatformViewRepresentable {
             ), let trust = space.serverTrust
             else { return (.performDefaultHandling, nil) }
             return (.useCredential, URLCredential(trust: trust))
+        }
+
+        /// A link that opens a new tab (`target="_blank"`, as n2's card links
+        /// do). There are no tabs here: a peer's page opens in this view, and
+        /// anything else in the system browser. Without this, WebKit asks for
+        /// a new window, gets none, and the tap does nothing.
+        func webView(
+            _ view: WKWebView,
+            createWebViewWith configuration: WKWebViewConfiguration,
+            for action: WKNavigationAction,
+            windowFeatures: WKWindowFeatures
+        ) -> WKWebView? {
+            guard let url = action.request.url else { return nil }
+            if Coordinator.opensHere(url, from: view.url) {
+                view.load(action.request)
+            } else {
+                #if os(iOS)
+                UIApplication.shared.open(url)
+                #else
+                NSWorkspace.shared.open(url)
+                #endif
+            }
+            return nil
+        }
+
+        /// A peer's page: the same site, or any port pai-sho binds locally
+        /// (`.localhost`, 127.0.0.1, or a `.pai-sho` name). Outside the app
+        /// those addresses lead nowhere.
+        static func opensHere(_ url: URL, from current: URL?) -> Bool {
+            guard let host = url.host?.lowercased() else { return false }
+            if let current, current.host?.lowercased() == host { return true }
+            return host == "localhost" || host.hasSuffix(".localhost") || host == "127.0.0.1"
+                || host.hasSuffix(".pai-sho")
         }
 
         /// The local port refused or dropped the connection: nothing is
@@ -118,6 +151,7 @@ struct WebView: PlatformViewRepresentable {
         DispatchQueue.main.async { swipe.attach() }
         #endif
         view.navigationDelegate = context.coordinator
+        view.uiDelegate = context.coordinator
         return view
     }
 
