@@ -78,7 +78,11 @@ public struct PaiShoView<Controls: View>: View {
         } detail: {
             if let selection, let peer = store.peer(selection.peer) {
                 if let url = store.url(for: selection) {
-                    PortPage(title: "\(store.title(for: peer)) : \(selection.port)", url: url) { shown in
+                    PortPage(
+                        title: "\(store.title(for: peer)) : \(selection.port)",
+                        url: url,
+                        onTitle: { store.remember(title: $0, for: selection) }
+                    ) { shown in
                         peer.displayURL(shown, port: selection.port)
                     }
                 } else {
@@ -159,7 +163,7 @@ struct PeerList<Controls: View>: View {
                     ForEach(peer.ports, id: \.self) { port in
                         let id = PortID(peer: peer.key, port: port)
                         NavigationLink(value: id) {
-                            PortRow(port: port, address: peer.address(port: port))
+                            PortRow(port: port, bound: peer.address(port: port) != nil, title: store.pageTitles[id])
                         }
                         .accessibilityIdentifier("port-\(port)")
                     }
@@ -208,19 +212,26 @@ struct PeerHeader: View {
     }
 }
 
+/// A port, and the title its page had when last opened. The local address
+/// it listens at says nothing to the user, so it isn't shown.
 struct PortRow: View {
     var port: UInt16
-    var address: String?
+    var bound: Bool
+    var title: String?
 
     var body: some View {
         HStack {
             Text(String(port))
                 .font(.body.monospacedDigit())
             Spacer()
-            if let address {
-                Text(address)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
+            if bound {
+                if let title {
+                    Text(title)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
             } else {
                 Text("not bound")
                     .font(.caption)

@@ -163,3 +163,27 @@ import Testing
         ))
     }
 }
+
+@Suite struct PageTitles {
+    @Test func aPortKeyRoundTrips() throws {
+        let id = PortID(peer: "abc123", port: 3042)
+        #expect(id.storageKey == "abc123:3042")
+        #expect(PortID(storageKey: id.storageKey) == id)
+        #expect(PortID(storageKey: "nope") == nil)
+        #expect(PortID(storageKey: ":3042") == nil)
+    }
+
+    @MainActor @Test func aTitleIsRememberedAcrossLaunches() throws {
+        let defaults = try #require(UserDefaults(suiteName: "PageTitles-\(UUID())"))
+        let client = DaemonClient(socketPath: "/nonexistent")
+        let id = PortID(peer: "abc123", port: 3042)
+
+        let first = PeerStore(client: client, opensByName: false, defaults: defaults)
+        first.remember(title: "  n2 board ", for: id)
+        first.remember(title: "", for: PortID(peer: "abc123", port: 1))
+        #expect(first.pageTitles[id] == "n2 board")
+
+        let next = PeerStore(client: client, opensByName: false, defaults: defaults)
+        #expect(next.pageTitles == [id: "n2 board"])
+    }
+}

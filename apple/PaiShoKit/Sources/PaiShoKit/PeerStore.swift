@@ -15,10 +15,30 @@ public final class PeerStore {
     /// Why the last refresh failed, kept only while there are no peers to show
     public private(set) var problem: String?
     public private(set) var loadedOnce = false
+    /// Each page's title, as it was when last opened. Kept across launches.
+    public private(set) var pageTitles: [PortID: String] = [:]
+    private let defaults: UserDefaults
 
-    public init(client: DaemonClient, opensByName: Bool) {
+    public init(client: DaemonClient, opensByName: Bool, defaults: UserDefaults = .standard) {
         self.client = client
         self.opensByName = opensByName
+        self.defaults = defaults
+        let saved = defaults.dictionary(forKey: Self.titlesKey) as? [String: String] ?? [:]
+        for (key, title) in saved {
+            if let id = PortID(storageKey: key) { pageTitles[id] = title }
+        }
+    }
+
+    static let titlesKey = "pageTitles"
+
+    /// Remember a page's title, to show in its port row next time.
+    public func remember(title: String, for id: PortID) {
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, pageTitles[id] != title else { return }
+        pageTitles[id] = title
+        var saved = defaults.dictionary(forKey: Self.titlesKey) as? [String: String] ?? [:]
+        saved[id.storageKey] = title
+        defaults.set(saved, forKey: Self.titlesKey)
     }
 
     /// Refresh until the calling task is cancelled.

@@ -8,6 +8,7 @@ struct WebView: PlatformViewRepresentable {
     var url: URL
     @Binding var shown: URL
     @Binding var failure: String?
+    var onTitle: (String) -> Void = { _ in }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
         var loaded: URL?
@@ -17,6 +18,7 @@ struct WebView: PlatformViewRepresentable {
 
         func webView(_ view: WKWebView, didFinish navigation: WKNavigation!) {
             parent.failure = nil
+            if let title = view.title, !title.isEmpty { parent.onTitle(title) }
         }
 
         func webView(_ view: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
@@ -82,12 +84,19 @@ public struct PortPage: View {
     var title: String
     var url: URL
     var address: (URL) -> String
+    var onTitle: (String) -> Void
     @State private var shown: URL
     @State private var failure: String?
 
-    public init(title: String, url: URL, address: @escaping (URL) -> String = { $0.absoluteString }) {
+    public init(
+        title: String,
+        url: URL,
+        onTitle: @escaping (String) -> Void = { _ in },
+        address: @escaping (URL) -> String = { $0.absoluteString }
+    ) {
         self.title = title
         self.url = url
+        self.onTitle = onTitle
         self.address = address
         _shown = State(initialValue: url)
     }
@@ -104,7 +113,7 @@ public struct PortPage: View {
                 .padding(.horizontal)
                 .padding(.vertical, 6)
             Divider()
-            WebView(url: url, shown: $shown, failure: $failure)
+            WebView(url: url, shown: $shown, failure: $failure, onTitle: onTitle)
                 .id(url)
                 .overlay {
                     if let failure {

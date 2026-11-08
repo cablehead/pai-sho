@@ -142,6 +142,18 @@ public struct PortID: Hashable, Sendable {
         self.peer = peer
         self.port = port
     }
+
+    /// `<peer key>:<port>`, for keeping per-port things on disk.
+    public var storageKey: String { "\(peer):\(port)" }
+
+    public init?(storageKey: String) {
+        guard let colon = storageKey.lastIndex(of: ":"),
+              let port = UInt16(storageKey[storageKey.index(after: colon)...])
+        else { return nil }
+        let peer = String(storageKey[..<colon])
+        guard !peer.isEmpty else { return nil }
+        self.init(peer: peer, port: port)
+    }
 }
 
 public enum DaemonError: Error, LocalizedError, Equatable {
