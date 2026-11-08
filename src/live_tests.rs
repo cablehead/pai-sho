@@ -724,3 +724,43 @@ async fn at_localhost_a_port_keeps_its_number_across_a_restart() {
     assert!(!table.contains(&a.key()));
     assert!(table.contains(&c.key()));
 }
+
+/// Whether `d` lists the peer `key` as online and awake.
+async fn sees_awake(d: &TestDaemon, key: &str) -> Option<()> {
+    let Response::List(list) = d.request(Request::List).await else {
+        return None;
+    };
+    let p = list.peers.iter().find(|p| p.key == key)?;
+    (p.online && !p.asleep).then_some(())
+}
+
+/// A message this daemon cannot parse, as from a newer one, is dropped. The
+/// link stays up and the next message still lands.
+#[tokio::test]
+async fn a_message_from_a_newer_peer_is_dropped() {
+    let (a, b) = pair(IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
+    a.daemon.peers().bind_at_localhost();
+    enroll(&a, &b, "b").await;
+    let (a_key, b_key) = (a.key(), b.key());
+    until(20, || sees_awake(&b, &a_key)).await;
+    until(20, || sees_awake(&a, &b_key)).await;
+
+    let a_id = a.daemon.endpoint().id();
+    b.daemon
+        .peers()
+        .send_raw(&a_id, br#"{"Nap":{"minutes":5}}"#)
+        .await
+        .unwrap();
+    b.daemon
+        .peers()
+        .send_raw(&a_id, br#"{"ExposedPorts":[4321]}"#)
+        .await
+        .unwrap();
+
+    until(20, || async {
+        let peers = a.daemon.peers().list().await;
+        let p = peers.iter().find(|p| p.key == b_key)?;
+        (p.online && p.they_expose == vec![4321]).then_some(())
+    })
+    .await;
+}

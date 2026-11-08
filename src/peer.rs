@@ -6,7 +6,7 @@
 //! tunnel.
 
 use crate::core::backoff::Backoff;
-use crate::core::dial::{self, Keep};
+use crate::core::dial::{self, Keep, Reach};
 use crate::core::session::{Action, Admission, ConnId, Refusal, Session};
 use crate::enroll::Pins;
 use crate::netstack::{Accept, NetStack};
@@ -41,9 +41,11 @@ struct Peer {
     endpoint_id: EndpointId,
     /// What we call this peer, from `--as` (None until something names it)
     label: Option<String>,
-    /// We dial this peer. False only while we are the inviter and they have
-    /// not called home yet.
-    dial: AtomicBool,
+    /// Whether we dial this peer or wait for its call: we wait while we are
+    /// the inviter and it has not called home yet, or after it said goodbye.
+    reach: std::sync::Mutex<Reach>,
+    /// Dials started, for the tests to watch
+    dial_attempts: AtomicU64,
     /// An invitation's one-time code, presented on connect by the accepter
     enroll_token: Option<String>,
     connection: RwLock<Option<Connection>>,
@@ -84,7 +86,12 @@ impl Peer {
         Arc::new(Self {
             endpoint_id,
             label,
-            dial: AtomicBool::new(dial),
+            reach: std::sync::Mutex::new(if dial {
+                Reach::dialed()
+            } else {
+                Reach::invited()
+            }),
+            dial_attempts: AtomicU64::new(0),
             enroll_token,
             connection: RwLock::new(connection),
             conn_dialed_by_us: AtomicBool::new(false),
@@ -266,6 +273,11 @@ impl PeerManager {
         Ok(())
     }
 
+    /// Whether `peer`'s loop should dial it now
+    fn dials(&self, peer: &Peer) -> bool {
+        peer.reach.lock().unwrap().dials(false)
+    }
+
     /// Spawn the connection management loop for a peer
     fn spawn_connection_loop(self: &Arc<Self>, peer: Arc<Peer>) {
         let manager = self.clone();
@@ -298,8 +310,8 @@ impl PeerManager {
                 return;
             }
 
-            if !peer.dial.load(Ordering::Relaxed) {
-                // Inviter, not yet reached. They call us.
+            if !manager.dials(&peer) {
+                // Inviter, not yet reached, or they said goodbye. They call us.
                 peer.conn_notify.notified().await;
                 if peer.removed.load(Ordering::Relaxed) {
                     return;
@@ -334,6 +346,18 @@ impl PeerManager {
                     return;
                 }
 
+                // A goodbye can land while we wait. Then they call us.
+                if !manager.dials(&peer) {
+                    peer.conn_notify.notified().await;
+                    if peer.removed.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    info!("{} reconnected via incoming connection", peer.endpoint_id);
+                    backoff.reset();
+                    break;
+                }
+
+                peer.dial_attempts.fetch_add(1, Ordering::Relaxed);
                 // iroh's own dial timeout only applies once it has an address
                 // to try, so bound the call ourselves rather than let the loop
                 // stall on it.
@@ -421,8 +445,9 @@ impl PeerManager {
                     let recv = result?;
                     let manager = manager.clone();
                     let peer = peer.clone();
+                    let conn = conn.clone();
                     tokio::spawn(async move {
-                        Self::handle_uni_stream(&manager, recv, &peer).await;
+                        Self::handle_uni_stream(&manager, &conn, recv, &peer).await;
                     });
                 }
                 result = conn.accept_bi() => {
@@ -441,6 +466,7 @@ impl PeerManager {
 
     async fn handle_uni_stream(
         manager: &Arc<PeerManager>,
+        conn: &Connection,
         mut recv: iroh::endpoint::RecvStream,
         peer: &Arc<Peer>,
     ) {
@@ -476,6 +502,14 @@ impl PeerManager {
             }
             PeerMessage::Error(e) => {
                 error!("peer error: {}", e);
+            }
+            PeerMessage::Goodbye => {
+                // Mark it asleep before closing, so the connection loop sees
+                // the close and waits instead of redialing. The sender waits
+                // for this close before it closes its end.
+                info!("{} said goodbye; waiting for it to call", peer.endpoint_id);
+                peer.reach.lock().unwrap().said_goodbye();
+                conn.close(0u32.into(), b"goodbye");
             }
         }
     }
@@ -912,6 +946,9 @@ impl PeerManager {
             None => return Ok(()),
         };
 
+        // It called, so it is awake, and from now on we dial it too.
+        peer.reach.lock().unwrap().connected_in();
+
         let mut conn_guard = peer.connection.write().await;
         let held_is_live = conn_guard
             .as_ref()
@@ -939,7 +976,6 @@ impl PeerManager {
         *conn_guard = Some(conn.clone());
         drop(conn_guard);
 
-        peer.dial.store(true, Ordering::Relaxed);
         peer.conn_notify.notify_one();
         info!("{} reconnected", remote_id);
 
@@ -1104,6 +1140,7 @@ impl PeerManager {
                     .map(|c| c.close_reason().is_none())
                     .unwrap_or(false)
             };
+            let asleep = peer.reach.lock().unwrap().asleep();
             let surface = peer.surface.read().await.clone();
             let mut bound_at: Vec<BoundAt> = peer
                 .bindings
@@ -1126,6 +1163,7 @@ impl PeerManager {
                 key: peer.endpoint_id.to_string(),
                 name: peer.label.clone(),
                 online,
+                asleep,
                 admission: admission.to_string(),
                 they_expose: peer.exposed_ports.read().await.clone(),
                 version: peer.version.read().await.clone(),
@@ -1341,6 +1379,36 @@ impl PeerManager {
                 self.release_binding(&peer, port).await;
             }
         }
+    }
+
+    /// Send `data` to a peer as a control message, whatever it holds. Lets a
+    /// test send what a newer daemon would.
+    #[cfg(test)]
+    pub async fn send_raw(&self, endpoint_id: &EndpointId, data: &[u8]) -> Result<()> {
+        let peer = self
+            .peers
+            .get(endpoint_id)
+            .map(|p| p.clone())
+            .ok_or_else(|| anyhow!("no such peer"))?;
+        let conn = peer
+            .connection
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| anyhow!("disconnected"))?;
+        let mut send = conn.open_uni().await?;
+        send.write_all(data).await?;
+        send.finish()?;
+        Ok(())
+    }
+
+    /// How many dials `endpoint_id`'s loop has started
+    #[cfg(test)]
+    pub fn dial_attempts(&self, endpoint_id: &EndpointId) -> u64 {
+        self.peers
+            .get(endpoint_id)
+            .map(|p| p.dial_attempts.load(Ordering::Relaxed))
+            .unwrap_or(0)
     }
 
     /// Close the connection and leave the peer in place, like a laptop

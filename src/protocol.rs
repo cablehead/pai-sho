@@ -105,6 +105,10 @@ pub struct PeerInfo {
     #[serde(default)]
     pub version: Option<String>,
     pub online: bool,
+    /// It said goodbye, and we wait for it to call rather than dialing it.
+    /// False from a daemon older than this field.
+    #[serde(default)]
+    pub asleep: bool,
     /// How this peer came to be admitted: "added", "code", or "key"
     pub admission: String,
     /// Ports this peer exposes to us
@@ -150,6 +154,10 @@ pub enum PeerMessage {
     },
     /// Error response
     Error(String),
+    /// The sender is going to sleep: do not dial it, it calls when it wakes.
+    /// Sent only on an explicit `Sleep` request, never on shutdown (ADR
+    /// 0009). A daemon older than this fails to parse it and drops it.
+    Goodbye,
 }
 
 impl PeerMessage {
@@ -207,6 +215,39 @@ mod tests {
         .unwrap();
         assert_eq!(peer.bound, vec![80]);
         assert!(peer.bound_at.is_empty());
+    }
+
+    #[test]
+    fn an_old_peer_row_is_not_asleep() {
+        let peer: PeerInfo = serde_json::from_str(
+            r#"{"key":"k","name":null,"online":false,"admission":"code",
+                "they_expose":[],"ip":null,"bound":[]}"#,
+        )
+        .unwrap();
+        assert!(!peer.asleep);
+    }
+
+    /// A daemon older than Goodbye fails to parse it. Its receiver logs the
+    /// parse error and drops the message, so the link carries on.
+    #[test]
+    fn an_old_peer_cannot_parse_goodbye() {
+        #[derive(Debug, Deserialize)]
+        #[allow(dead_code)]
+        enum OldMessage {
+            ExposedPorts(Vec<u16>),
+            Connect { port: u16 },
+            Enroll { token: String },
+            Error(String),
+        }
+
+        let json = serde_json::to_vec(&PeerMessage::Goodbye).unwrap();
+        assert!(serde_json::from_slice::<OldMessage>(&json).is_err());
+        let ports = serde_json::to_vec(&PeerMessage::ExposedPorts(vec![80])).unwrap();
+        assert!(serde_json::from_slice::<OldMessage>(&ports).is_ok());
+        assert!(matches!(
+            serde_json::from_slice::<PeerMessage>(&json).unwrap(),
+            PeerMessage::Goodbye
+        ));
     }
 
     #[test]

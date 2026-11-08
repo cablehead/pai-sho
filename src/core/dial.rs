@@ -1,6 +1,57 @@
-//! Which connection to keep when both ends have one. Pure.
+//! Whether to dial a peer, and which connection to keep when both ends have
+//! one. Pure.
 
 use iroh::EndpointId;
+
+/// Whether we call a peer or wait for it to call us.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Reach {
+    /// We took up its invitation, or it has connected to us. Either way we
+    /// dial it (ADR 0008).
+    reached: bool,
+    /// It said goodbye: it is going to sleep and will call us when it wakes
+    /// (ADR 0009).
+    asleep: bool,
+}
+
+impl Reach {
+    /// A peer whose invitation we took up, or one that has connected.
+    pub fn dialed() -> Self {
+        Self {
+            reached: true,
+            asleep: false,
+        }
+    }
+
+    /// A peer we invited that has not called yet.
+    pub fn invited() -> Self {
+        Self {
+            reached: false,
+            asleep: false,
+        }
+    }
+
+    /// It connected to us. It has proven its key, and it is awake.
+    pub fn connected_in(&mut self) {
+        self.reached = true;
+        self.asleep = false;
+    }
+
+    /// It said goodbye. Wait for it to call.
+    pub fn said_goodbye(&mut self) {
+        self.asleep = true;
+    }
+
+    pub fn asleep(&self) -> bool {
+        self.asleep
+    }
+
+    /// Whether to dial it now. `we_sleep` is true once we have said goodbye
+    /// ourselves: we are about to be suspended, and we call when we wake.
+    pub fn dials(&self, we_sleep: bool) -> bool {
+        self.reached && !self.asleep && !we_sleep
+    }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Keep {
@@ -55,6 +106,49 @@ mod tests {
         } else {
             (b, a)
         }
+    }
+
+    #[test]
+    fn an_invited_peer_is_waited_for_until_it_calls() {
+        let mut reach = Reach::invited();
+        assert!(!reach.dials(false));
+        reach.connected_in();
+        assert!(reach.dials(false));
+    }
+
+    #[test]
+    fn a_peer_that_said_goodbye_is_not_dialed() {
+        let mut reach = Reach::dialed();
+        assert!(reach.dials(false));
+        reach.said_goodbye();
+        assert!(reach.asleep());
+        assert!(!reach.dials(false));
+    }
+
+    #[test]
+    fn a_sleeping_peer_is_awake_once_it_calls() {
+        let mut reach = Reach::dialed();
+        reach.said_goodbye();
+        reach.connected_in();
+        assert!(!reach.asleep());
+        assert!(reach.dials(false));
+    }
+
+    /// An invited peer that says goodbye before we ever dialed it still
+    /// waits, and dials once it calls.
+    #[test]
+    fn goodbye_from_an_invited_peer_still_waits_for_its_call() {
+        let mut reach = Reach::invited();
+        reach.said_goodbye();
+        assert!(!reach.dials(false));
+        reach.connected_in();
+        assert!(reach.dials(false));
+    }
+
+    #[test]
+    fn we_dial_no_one_once_we_have_said_goodbye() {
+        assert!(!Reach::dialed().dials(true));
+        assert!(!Reach::invited().dials(true));
     }
 
     #[test]
