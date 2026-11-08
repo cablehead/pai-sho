@@ -83,7 +83,8 @@ final class PaiShoUITests: XCTestCase {
         attach(app, "after-page-nudge")
         XCTAssertEqual(app.webViews.firstMatch.screenshot().pngRepresentation, here, "a short pull moved the page")
 
-        swipeFromLeftEdge(app)
+        // From the middle of the screen, not the edge.
+        swipeFromLeftEdge(app, from: 0.3)
         sleep(2)
         attach(app, "after-first-swipe")
         XCTAssertTrue(app.webViews.firstMatch.exists, "first swipe left the page")
@@ -95,7 +96,7 @@ final class PaiShoUITests: XCTestCase {
         attach(app, "after-nudge")
         XCTAssertFalse(row.isHittable, "a short pull left the page")
 
-        swipeFromLeftEdge(app)
+        swipeFromLeftEdge(app, from: 0.2, to: 0.95)
         XCTAssertTrue(row.waitForExistence(timeout: 10), "second swipe did not reach the main screen")
         attach(app, "main-screen")
     }
@@ -106,9 +107,9 @@ final class PaiShoUITests: XCTestCase {
         start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: hold)
     }
 
-    private func swipeFromLeftEdge(_ app: XCUIApplication) {
-        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
-        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5))
+    private func swipeFromLeftEdge(_ app: XCUIApplication, from x: CGFloat = 0.01, to endX: CGFloat = 0.8) {
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: 0.5))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: endX, dy: 0.5))
         start.press(forDuration: 0.05, thenDragTo: end)
     }
 
