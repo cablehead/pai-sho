@@ -14,3 +14,4 @@ When a decision changes, append a new ADR that references and supersedes the pre
 - [0006](0006-invitations.md) Invitations: `invite` / `accept`, and a grant always names its grantees
 - [0007](0007-pure-core.md) A pure core for admission and authorization
 - [0008](0008-both-ends-dial.md) Both ends dial a peer they have reached
+- [0009](0009-goodbye-on-sleep.md) A peer says goodbye before it sleeps, never on a restart
