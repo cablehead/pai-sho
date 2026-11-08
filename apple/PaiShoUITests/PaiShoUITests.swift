@@ -88,6 +88,43 @@ final class PaiShoUITests: XCTestCase {
         XCTAssertTrue(back.isEnabled, "the page's history was lost")
     }
 
+    /// Out to the main screen from another page of the site and back in:
+    /// that page, not the port's front page.
+    func testKeepsTheTabAcrossPages() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let invite = env["PAI_SHO_INVITE"], let port = env["PAI_SHO_PORT"],
+              let expect = env["PAI_SHO_EXPECT"]
+        else { throw XCTSkip("set TEST_RUNNER_PAI_SHO_INVITE, _PORT and _EXPECT") }
+
+        let app = XCUIApplication()
+        app.launchArguments = ["-invite", invite]
+        app.launch()
+        let name = app.textFields["name"]
+        if name.waitForExistence(timeout: 10) {
+            name.tap()
+            name.typeText("mac")
+            app.buttons["Accept"].tap()
+        }
+        let row = app.buttons["port-\(port)"]
+        XCTAssertTrue(row.waitForExistence(timeout: 60), "port \(port) never listed")
+        row.tap()
+        XCTAssertTrue(app.webViews.staticTexts[expect].waitForExistence(timeout: 30))
+        let link = env["PAI_SHO_LINK"] ?? "other page", there = env["PAI_SHO_THERE"] ?? "the other page"
+        let contents = app.webViews.staticTexts["contents"]
+        if !app.webViews.links[link].isHittable, contents.exists { contents.tap() }
+        app.webViews.links[link].firstMatch.tap()
+        XCTAssertTrue(app.webViews.staticTexts[there].waitForExistence(timeout: 10))
+        attach(app, "there")
+
+        app.buttons["peers"].tap()
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        attach(app, "home")
+        row.tap()
+        sleep(2)
+        attach(app, "back-in")
+        XCTAssertTrue(app.webViews.staticTexts[there].exists, "back at the front page")
+    }
+
     /// Back from the background, the page stays on screen while pai-sho
     /// restarts and its port comes back, rather than a "not reachable"
     /// screen in its place.

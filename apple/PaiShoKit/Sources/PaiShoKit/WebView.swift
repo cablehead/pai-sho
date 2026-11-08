@@ -93,6 +93,12 @@ struct WebView: PlatformViewRepresentable {
                 || host.hasSuffix(".pai-sho")
         }
 
+        /// The address a failed load was for.
+        static func failedURL(_ error: NSError) -> URL? {
+            (error.userInfo[NSURLErrorFailingURLErrorKey] as? URL)
+                ?? (error.userInfo[NSURLErrorFailingURLStringErrorKey] as? String).flatMap(URL.init(string:))
+        }
+
         /// The local port refused or dropped the connection: nothing is
         /// listening there right now.
         static func nothingListening(_ error: NSError) -> Bool {
@@ -105,7 +111,10 @@ struct WebView: PlatformViewRepresentable {
             if error.domain == NSURLErrorDomain, error.code == NSURLErrorCancelled { return }
             if Coordinator.nothingListening(error), retries > 0 {
                 retries -= 1
-                let url = parent.url
+                // The page that failed, not the port's front page: coming
+                // back to the app, a page reloading while pai-sho restarts
+                // must come back as itself.
+                let url = Coordinator.failedURL(error) ?? view.url ?? parent.url
                 parent.shown = url
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak view] in
                     view?.load(URLRequest(url: url))

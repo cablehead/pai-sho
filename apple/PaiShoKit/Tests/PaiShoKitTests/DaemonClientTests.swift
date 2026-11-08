@@ -260,4 +260,14 @@ import Testing
         #expect(WebView.Coordinator.opensHere(URL(string: "https://chunker.pai-sho:3042/")!, from: nil))
         #expect(!WebView.Coordinator.opensHere(URL(string: "https://github.com/cablehead")!, from: board))
     }
+
+    /// A load that fails while pai-sho restarts is retried at its own
+    /// address, not the port's front page.
+    @Test func aFailedLoadIsRetriedWhereItWas() {
+        let page = URL(string: "http://chunker.localhost:3042/local/web-push/")!
+        let error = NSError(domain: NSURLErrorDomain, code: NSURLErrorCannotConnectToHost,
+                            userInfo: [NSURLErrorFailingURLErrorKey: page])
+        #expect(WebView.Coordinator.failedURL(error) == page)
+        #expect(WebView.Coordinator.failedURL(NSError(domain: NSURLErrorDomain, code: -1)) == nil)
+    }
 }
