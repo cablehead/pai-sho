@@ -9,6 +9,8 @@ struct WebView: PlatformViewRepresentable {
     @Binding var shown: URL
     @Binding var failure: String?
     var onTitle: (String) -> Void = { _ in }
+    /// Swiping right with no page history left: leave the page.
+    var onLeave: () -> Void = {}
 
     final class Coordinator: NSObject, WKNavigationDelegate {
         var loaded: URL?
@@ -50,6 +52,19 @@ struct WebView: PlatformViewRepresentable {
             else { return (.performDefaultHandling, nil) }
             return (.useCredential, URLCredential(trust: trust))
         }
+
+        #if os(iOS)
+        /// Swipe right from the left edge: back in the page's own history
+        /// first (an n2 thread back to its list), out of the page after.
+        @objc func edgeSwipe(_ gesture: UIScreenEdgePanGestureRecognizer) {
+            guard gesture.state == .ended, let view = gesture.view as? WKWebView else { return }
+            if view.canGoBack {
+                view.goBack()
+            } else {
+                parent.onLeave()
+            }
+        }
+        #endif
 
         /// The local port refused or dropped the connection: nothing is
         /// listening there right now.
@@ -93,7 +108,16 @@ struct WebView: PlatformViewRepresentable {
         view.backgroundColor = .clear
         view.scrollView.backgroundColor = .clear
         #endif
+        #if os(macOS)
         view.allowsBackForwardNavigationGestures = true
+        #else
+        // One edge swipe does both jobs (see Coordinator.edgeSwipe), so the
+        // web view's own back gesture is off.
+        let swipe = UIScreenEdgePanGestureRecognizer(
+            target: context.coordinator, action: #selector(Coordinator.edgeSwipe(_:)))
+        swipe.edges = .left
+        view.addGestureRecognizer(swipe)
+        #endif
         view.navigationDelegate = context.coordinator
         return view
     }
@@ -114,6 +138,7 @@ public struct PortPage: View {
     var url: URL
     var address: (URL) -> String
     var onTitle: (String) -> Void
+    var onLeave: () -> Void
     @State private var shown: URL
     @State private var failure: String?
 
@@ -121,11 +146,13 @@ public struct PortPage: View {
         title: String,
         url: URL,
         onTitle: @escaping (String) -> Void = { _ in },
+        onLeave: @escaping () -> Void = {},
         address: @escaping (URL) -> String = { $0.absoluteString }
     ) {
         self.title = title
         self.url = url
         self.onTitle = onTitle
+        self.onLeave = onLeave
         self.address = address
         _shown = State(initialValue: url)
     }
@@ -144,7 +171,7 @@ public struct PortPage: View {
                 .padding(.vertical, 6)
             Divider()
             #endif
-            WebView(url: url, shown: $shown, failure: $failure, onTitle: onTitle)
+            WebView(url: url, shown: $shown, failure: $failure, onTitle: onTitle, onLeave: onLeave)
                 .id(url)
                 .overlay {
                     if let failure {
@@ -167,9 +194,9 @@ public struct PortPage: View {
             failure = nil
         }
         #if os(iOS)
-        .navigationTitle("")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(.hidden, for: .navigationBar)
+        // No header on a phone: the clock, then the page. Swipe right to go
+        // back, in the page and then out of it.
+        .toolbar(.hidden, for: .navigationBar)
         #else
         .navigationTitle(title)
         #endif

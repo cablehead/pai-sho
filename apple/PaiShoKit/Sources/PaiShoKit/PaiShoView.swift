@@ -81,7 +81,8 @@ public struct PaiShoView<Controls: View>: View {
                     PortPage(
                         title: "\(store.title(for: peer)) : \(selection.port)",
                         url: url,
-                        onTitle: { store.remember(title: $0, for: selection) }
+                        onTitle: { store.remember(title: $0, for: selection) },
+                        onLeave: { self.selection = nil }
                     ) { shown in
                         peer.displayURL(shown, port: selection.port)
                     }
