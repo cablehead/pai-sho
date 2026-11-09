@@ -238,6 +238,21 @@ final class PaiShoUITests: XCTestCase {
         XCTAssertTrue(app.webViews.staticTexts[expect].waitForExistence(timeout: 30))
         sleep(1)
         attach(app, "page")
+        // The start page itself, scrolled all the way down.
+        for _ in 0..<25 { app.webViews.firstMatch.swipeUp(velocity: .fast) }
+        sleep(2)
+        attach(app, "page-bottom")
+        // A short page that is about one screen tall, scrolled down.
+        if let tap = env["PAI_SHO_TAP"] {
+            app.webViews.staticTexts[tap].firstMatch.tap()
+            sleep(2)
+            for _ in 0..<5 { app.webViews.firstMatch.swipeUp(velocity: .fast) }
+            sleep(2)
+            attach(app, "tapped-bottom")
+            return
+        }
+        for _ in 0..<25 { app.webViews.firstMatch.swipeDown(velocity: .fast) }
+        sleep(1)
         let box = app.webViews.textFields.firstMatch
         XCTAssertTrue(box.waitForExistence(timeout: 10))
         box.tap()

@@ -182,6 +182,12 @@ struct PeerList<Controls: View>: View {
                     PeerHeader(title: store.title(for: peer), status: store.status(of: peer))
                 }
             }
+            Section {
+            } footer: {
+                Text(appVersion)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityIdentifier("version")
+            }
         }
         .overlay {
             if store.peers.isEmpty {
@@ -206,6 +212,14 @@ struct PeerList<Controls: View>: View {
             }
         }
     }
+}
+
+/// "Version 0.5.4 (26)": the release, then the build, as TestFlight shows them.
+var appVersion: String {
+    let info = Bundle.main.infoDictionary ?? [:]
+    let release = info["CFBundleShortVersionString"] as? String ?? "?"
+    let build = info["CFBundleVersion"] as? String ?? "?"
+    return "Version \(release) (\(build))"
 }
 
 struct PeerHeader: View {
