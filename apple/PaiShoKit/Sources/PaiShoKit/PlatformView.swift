@@ -24,6 +24,58 @@ extension PlatformViewRepresentable {
     }
     static func dismantleView(_ view: Wrapped, coordinator: Coordinator) {}
 }
+
+/// A web page's view, inside a controller of its own. A bare view only
+/// counts the screen's edges as safe area; a controller's view also counts
+/// the app's own bars, so WebKit sees the buttons over the page's bottom as
+/// it sees the home bar. A page then scrolls under both and ends above both,
+/// and keeps that around the keyboard, since WebKit does it itself.
+final class PageController<Wrapped: UIView>: UIViewController {
+    let wrapped: Wrapped
+
+    init(_ wrapped: Wrapped) {
+        self.wrapped = wrapped
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("not from a storyboard") }
+
+    override func loadView() {
+        view = UIView()
+        view.backgroundColor = .clear
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        place()
+    }
+
+    /// A kept page's view moves to the newest controller showing it.
+    func place() {
+        guard isViewLoaded, wrapped.superview !== view else { return }
+        wrapped.frame = view.bounds
+        wrapped.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.addSubview(wrapped)
+    }
+}
+
+/// PlatformViewRepresentable, for a view wrapped in a PageController.
+@MainActor
+protocol PageViewRepresentable: UIViewControllerRepresentable where UIViewControllerType == PageController<Wrapped> {
+    associatedtype Wrapped: UIView
+    func makeView(context: Context) -> Wrapped
+    func updateView(_ view: Wrapped, context: Context)
+}
+
+extension PageViewRepresentable {
+    func makeUIViewController(context: Context) -> PageController<Wrapped> {
+        PageController(makeView(context: context))
+    }
+    func updateUIViewController(_ controller: PageController<Wrapped>, context: Context) {
+        controller.place()
+        updateView(controller.wrapped, context: context)
+    }
+}
 #elseif os(macOS)
 import AppKit
 public typealias PlatformView = NSView

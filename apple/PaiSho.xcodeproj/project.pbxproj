@@ -111,6 +111,7 @@
 				A20000000000000000000002 /* Sources */,
 				A20000000000000000000001 /* Frameworks */,
 				A20000000000000000000006 /* Resources */,
+				A20000000000000000000007 /* Stamp build number */,
 			);
 			buildRules = (
 			);
@@ -208,6 +209,25 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"$PROJECT_DIR/build-rust.sh\"\n";
+		};
+		A20000000000000000000007 /* Stamp build number */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Stamp build number";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$PROJECT_DIR/stamp-build.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

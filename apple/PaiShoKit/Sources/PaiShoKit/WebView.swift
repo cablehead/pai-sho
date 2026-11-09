@@ -2,19 +2,22 @@ import SwiftUI
 import Combine
 import WebKit
 
+#if os(iOS)
+typealias PageRepresentable = PageViewRepresentable
+#else
+typealias PageRepresentable = PlatformViewRepresentable
+#endif
+
 /// A peer's page. Loads `url` once, and again only when it changes. If the
 /// page fails over http it is tried over https; `shown` is the address that
 /// is loading, and `failure` says why neither loaded.
-struct WebView: PlatformViewRepresentable {
+struct WebView: PageRepresentable {
     var url: URL
     @Binding var shown: URL
     @Binding var failure: String?
     var onTitle: (String) -> Void = { _ in }
     /// Back, forward and reload for the page's controls.
     var nav: PageNav
-    /// How far up from the bottom of the screen the app's buttons reach:
-    /// the page scrolls under them, and its end stops above them.
-    var covered: CGFloat = 0
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         var loaded: URL?
@@ -169,15 +172,6 @@ struct WebView: PlatformViewRepresentable {
 
     func updateView(_ view: WKWebView, context: Context) {
         context.coordinator.parent = self
-        #if os(iOS)
-        // The web view already keeps clear of the home bar; the buttons
-        // above it are the app's, so it adds the rest.
-        let extra = max(0, covered - view.safeAreaInsets.bottom)
-        if view.scrollView.contentInset.bottom != extra {
-            view.scrollView.contentInset.bottom = extra
-            view.scrollView.verticalScrollIndicatorInsets.bottom = extra
-        }
-        #endif
         guard context.coordinator.loaded != url else { return }
         context.coordinator.loaded = url
         context.coordinator.retries = Coordinator.maxRetries
@@ -228,7 +222,7 @@ public struct PortPage: View {
                 .padding(.vertical, 6)
             Divider()
             #endif
-            WebView(url: url, shown: $shown, failure: $failure, onTitle: onTitle, nav: nav, covered: typing ? 0 : covered)
+            WebView(url: url, shown: $shown, failure: $failure, onTitle: onTitle, nav: nav)
                 .id(url)
                 .overlay {
                     if let failure {
@@ -244,8 +238,10 @@ public struct PortPage: View {
                 // On a phone the page is the point: it fills the screen, its
                 // background running up behind the clock and down to the
                 // bottom edge. The web view still insets the content itself,
-                // so nothing sits under the status bar.
-                .ignoresSafeArea(.container, edges: [.top, .bottom])
+                // so nothing sits under the status bar. The keyboard too is
+                // the web view's to make room for, as in Safari: resized for
+                // it, WebKit lost the room above the buttons once it closed.
+                .ignoresSafeArea(edges: [.top, .bottom])
                 // Behind the buttons, a frosted strip: the page shows through
                 // it, but a tap there is the strip's, not the page's.
                 .overlay(alignment: .bottom) {

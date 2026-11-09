@@ -242,15 +242,6 @@ final class PaiShoUITests: XCTestCase {
         for _ in 0..<25 { app.webViews.firstMatch.swipeUp(velocity: .fast) }
         sleep(2)
         attach(app, "page-bottom")
-        // A short page that is about one screen tall, scrolled down.
-        if let tap = env["PAI_SHO_TAP"] {
-            app.webViews.staticTexts[tap].firstMatch.tap()
-            sleep(2)
-            for _ in 0..<5 { app.webViews.firstMatch.swipeUp(velocity: .fast) }
-            sleep(2)
-            attach(app, "tapped-bottom")
-            return
-        }
         for _ in 0..<25 { app.webViews.firstMatch.swipeDown(velocity: .fast) }
         sleep(1)
         let box = app.webViews.textFields.firstMatch
@@ -266,6 +257,21 @@ final class PaiShoUITests: XCTestCase {
         let done = app.toolbars.buttons["Done"]
         if done.exists { done.tap() } else { app.webViews.staticTexts[expect].firstMatch.tap() }
         sleep(1)
+
+        // A short page about one screen tall, opened after typing, scrolled
+        // down: the keyboard going away must not take the page's end back
+        // under the buttons.
+        if let tap = env["PAI_SHO_TAP"] {
+            // After the keyboard, the first tap only picks the card.
+            app.webViews.staticTexts[tap].firstMatch.tap()
+            sleep(1)
+            app.webViews.staticTexts[tap].firstMatch.tap()
+            sleep(2)
+            for _ in 0..<5 { app.webViews.firstMatch.swipeUp(velocity: .fast) }
+            sleep(2)
+            attach(app, "tapped-bottom")
+            return
+        }
 
         // The end of a long page, scrolled all the way down: clear of the
         // buttons, with the page showing through the strip behind them.
