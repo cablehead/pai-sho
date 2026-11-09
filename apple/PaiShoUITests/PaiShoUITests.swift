@@ -295,14 +295,19 @@ final class PaiShoUITests: XCTestCase {
     /// Opens the thread whose card shows `text`, scrolls to its end, and
     /// attaches that. After the keyboard, the first tap only picks the card.
     private func openAndScroll(_ app: XCUIApplication, _ text: String, twice: Bool) {
-        let card = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
+        let card = app.webViews.firstMatch.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", text)).element(boundBy: 0)
         card.tap()
         sleep(1)
-        if twice {
+        if twice, card.exists, card.isHittable {
             card.tap()
             sleep(2)
         }
         attach(app, "tapped")
+        // A thread opens at its newest card, its end: back up, then read down.
+        for _ in 0..<4 { app.webViews.firstMatch.swipeDown() }
+        app.webViews.firstMatch.swipeUp()
+        sleep(1)
+        attach(app, "tapped-reading")
         for _ in 0..<25 { app.webViews.firstMatch.swipeUp(velocity: .fast) }
         sleep(2)
         attach(app, "tapped-bottom")
