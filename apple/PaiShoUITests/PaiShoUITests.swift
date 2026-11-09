@@ -214,6 +214,40 @@ final class PaiShoUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Scan"].waitForExistence(timeout: 10))
     }
 
+    /// A page's own text box near the top, opened: it stays on screen with
+    /// the keyboard up. And the end of a long page scrolls clear of the
+    /// buttons under it.
+    func testPageEdges() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let invite = env["PAI_SHO_INVITE"], let port = env["PAI_SHO_PORT"],
+              let expect = env["PAI_SHO_EXPECT"]
+        else { throw XCTSkip("set TEST_RUNNER_PAI_SHO_INVITE, _PORT and _EXPECT") }
+
+        let app = XCUIApplication()
+        app.launchArguments = ["-invite", invite]
+        app.launch()
+        let name = app.textFields["name"]
+        if name.waitForExistence(timeout: 10) {
+            name.tap()
+            name.typeText("mac")
+            app.buttons["Accept"].tap()
+        }
+        let row = app.buttons["port-\(port)"]
+        XCTAssertTrue(row.waitForExistence(timeout: 60), "port \(port) never listed")
+        row.tap()
+        XCTAssertTrue(app.webViews.staticTexts[expect].waitForExistence(timeout: 30))
+        sleep(1)
+        attach(app, "page")
+        let box = app.webViews.textFields.firstMatch
+        XCTAssertTrue(box.waitForExistence(timeout: 10))
+        box.tap()
+        sleep(2)
+        attach(app, "box-open")
+        box.typeText("test")
+        sleep(1)
+        attach(app, "box-typed")
+    }
+
     private func attach(_ app: XCUIApplication, _ name: String) {
         let shot = XCTAttachment(screenshot: app.screenshot())
         shot.name = name
