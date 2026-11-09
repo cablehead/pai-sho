@@ -246,6 +246,24 @@ final class PaiShoUITests: XCTestCase {
         box.typeText("test")
         sleep(1)
         attach(app, "box-typed")
+        box.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 4))
+        attach(app, "box-cleared")
+        let done = app.toolbars.buttons["Done"]
+        if done.exists { done.tap() } else { app.webViews.staticTexts[expect].firstMatch.tap() }
+        sleep(1)
+
+        // The end of a long page, scrolled all the way down: clear of the
+        // buttons, with the page showing through the strip behind them.
+        guard let long = env["PAI_SHO_LONG"] else { return }
+        // The page's contents fold, at the left of its bar.
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 31, dy: 87)).tap()
+        sleep(1)
+        attach(app, "contents")
+        app.webViews.links[long].firstMatch.tap()
+        sleep(3)
+        for _ in 0..<25 { app.webViews.firstMatch.swipeUp(velocity: .fast) }
+        sleep(2)
+        attach(app, "bottom")
     }
 
     private func attach(_ app: XCUIApplication, _ name: String) {

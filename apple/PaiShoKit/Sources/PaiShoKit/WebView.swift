@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import WebKit
 
 /// A peer's page. Loads `url` once, and again only when it changes. If the
@@ -11,6 +12,9 @@ struct WebView: PlatformViewRepresentable {
     var onTitle: (String) -> Void = { _ in }
     /// Back, forward and reload for the page's controls.
     var nav: PageNav
+    /// How far up from the bottom of the screen the app's buttons reach:
+    /// the page scrolls under them, and its end stops above them.
+    var covered: CGFloat = 0
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         var loaded: URL?
@@ -165,6 +169,15 @@ struct WebView: PlatformViewRepresentable {
 
     func updateView(_ view: WKWebView, context: Context) {
         context.coordinator.parent = self
+        #if os(iOS)
+        // The web view already keeps clear of the home bar; the buttons
+        // above it are the app's, so it adds the rest.
+        let extra = max(0, covered - view.safeAreaInsets.bottom)
+        if view.scrollView.contentInset.bottom != extra {
+            view.scrollView.contentInset.bottom = extra
+            view.scrollView.verticalScrollIndicatorInsets.bottom = extra
+        }
+        #endif
         guard context.coordinator.loaded != url else { return }
         context.coordinator.loaded = url
         context.coordinator.retries = Coordinator.maxRetries
@@ -183,6 +196,8 @@ public struct PortPage: View {
     @State private var shown: URL
     @State private var failure: String?
     @State private var nav = PageNav()
+    @State private var covered: CGFloat = 0
+    @State private var typing = false
 
     public init(
         title: String,
@@ -213,7 +228,7 @@ public struct PortPage: View {
                 .padding(.vertical, 6)
             Divider()
             #endif
-            WebView(url: url, shown: $shown, failure: $failure, onTitle: onTitle, nav: nav)
+            WebView(url: url, shown: $shown, failure: $failure, onTitle: onTitle, nav: nav, covered: typing ? 0 : covered)
                 .id(url)
                 .overlay {
                     if let failure {
@@ -231,8 +246,29 @@ public struct PortPage: View {
                 // bottom edge. The web view still insets the content itself,
                 // so nothing sits under the status bar.
                 .ignoresSafeArea(.container, edges: [.top, .bottom])
+                // Behind the buttons, a frosted strip: the page shows through
+                // it, but a tap there is the strip's, not the page's.
+                .overlay(alignment: .bottom) {
+                    if covered > 0, !typing {
+                        Rectangle()
+                            .fill(.ultraThinMaterial)
+                            .frame(height: covered)
+                            .contentShape(Rectangle())
+                            .onTapGesture {}
+                            .accessibilityHidden(true)
+                            .ignoresSafeArea(.container, edges: .bottom)
+                    }
+                }
                 #endif
         }
+        #if os(iOS)
+        // The buttons' reach: the bottom of the safe area, which the bar of
+        // buttons adds to. With the keyboard up that's the keyboard, which
+        // the page makes room for by itself, so there's no strip then.
+        .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.bottom } action: { covered = $0 }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in typing = true }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in typing = false }
+        #endif
         .onChange(of: url) {
             shown = url
             failure = nil
