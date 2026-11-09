@@ -244,6 +244,11 @@ final class PaiShoUITests: XCTestCase {
         attach(app, "page-bottom")
         for _ in 0..<25 { app.webViews.firstMatch.swipeDown(velocity: .fast) }
         sleep(1)
+        // The same, with no typing first.
+        if let tap = env["PAI_SHO_TAP_FIRST"], !tap.isEmpty {
+            openAndScroll(app, tap, twice: true)
+            return
+        }
         let box = app.webViews.textFields.firstMatch
         XCTAssertTrue(box.waitForExistence(timeout: 10))
         box.tap()
@@ -261,30 +266,46 @@ final class PaiShoUITests: XCTestCase {
         // A short page about one screen tall, opened after typing, scrolled
         // down: the keyboard going away must not take the page's end back
         // under the buttons.
-        if let tap = env["PAI_SHO_TAP"] {
-            // After the keyboard, the first tap only picks the card.
-            app.webViews.staticTexts[tap].firstMatch.tap()
-            sleep(1)
-            app.webViews.staticTexts[tap].firstMatch.tap()
-            sleep(2)
-            for _ in 0..<5 { app.webViews.firstMatch.swipeUp(velocity: .fast) }
-            sleep(2)
-            attach(app, "tapped-bottom")
+        if let tap = env["PAI_SHO_TAP"], !tap.isEmpty {
+            openAndScroll(app, tap, twice: true)
             return
         }
 
         // The end of a long page, scrolled all the way down: clear of the
         // buttons, with the page showing through the strip behind them.
-        guard let long = env["PAI_SHO_LONG"] else { return }
+        guard let long = env["PAI_SHO_LONG"], !long.isEmpty else { return }
         // The page's contents fold, at the left of its bar.
         app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 31, dy: 87)).tap()
         sleep(1)
         attach(app, "contents")
         app.webViews.links[long].firstMatch.tap()
         sleep(3)
+        // Reading down: the buttons step aside; a little back up, they return.
+        for _ in 0..<3 { app.webViews.firstMatch.swipeUp() }
+        sleep(1)
+        attach(app, "reading")
+        app.webViews.firstMatch.swipeDown()
+        sleep(1)
+        attach(app, "back-up")
         for _ in 0..<25 { app.webViews.firstMatch.swipeUp(velocity: .fast) }
         sleep(2)
         attach(app, "bottom")
+    }
+
+    /// Opens the thread whose card shows `text`, scrolls to its end, and
+    /// attaches that. After the keyboard, the first tap only picks the card.
+    private func openAndScroll(_ app: XCUIApplication, _ text: String, twice: Bool) {
+        let card = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
+        card.tap()
+        sleep(1)
+        if twice {
+            card.tap()
+            sleep(2)
+        }
+        attach(app, "tapped")
+        for _ in 0..<25 { app.webViews.firstMatch.swipeUp(velocity: .fast) }
+        sleep(2)
+        attach(app, "tapped-bottom")
     }
 
     private func attach(_ app: XCUIApplication, _ name: String) {
