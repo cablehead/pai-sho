@@ -245,7 +245,7 @@ public struct PortPage: View {
                 // Behind the buttons, a frosted strip: the page shows through
                 // it, but a tap there is the strip's, not the page's.
                 .overlay(alignment: .bottom) {
-                    if covered > 0, !typing, !nav.barsHidden {
+                    if covered > 0, !typing {
                         Rectangle()
                             .fill(.ultraThinMaterial)
                             .frame(height: covered)
@@ -275,8 +275,6 @@ public struct PortPage: View {
         // own history, as in any browser; the main screen is a button of its
         // own, so getting out never means walking back through the history.
         .toolbar(.hidden, for: .navigationBar)
-        .toolbar(nav.barsHidden ? .hidden : .visible, for: .bottomBar)
-        .animation(.easeInOut(duration: 0.25), value: nav.barsHidden)
         .toolbar {
             ToolbarItemGroup(placement: .bottomBar) {
                 Button(action: onLeave) {
@@ -315,17 +313,10 @@ final class PageNav {
     @ObservationIgnored weak var view: WKWebView?
     var canGoBack = false
     var canGoForward = false
-    /// The buttons step aside while you read down a page, as Safari's bar
-    /// does, and come back when you scroll up, reach either end, or a page
-    /// starts loading.
-    var barsHidden = false
     @ObservationIgnored private var watches: [NSKeyValueObservation] = []
-    /// How far you've scrolled one way since last turning round.
-    @ObservationIgnored private var travel: CGFloat = 0
 
     func attach(_ view: WKWebView) {
         self.view = view
-        barsHidden = false
         watches = [
             view.observe(\.canGoBack, options: [.initial, .new]) { [weak self] view, _ in
                 MainActor.assumeIsolated { self?.canGoBack = view.canGoBack }
@@ -333,31 +324,8 @@ final class PageNav {
             view.observe(\.canGoForward, options: [.initial, .new]) { [weak self] view, _ in
                 MainActor.assumeIsolated { self?.canGoForward = view.canGoForward }
             },
-            view.observe(\.isLoading, options: [.new]) { [weak self] view, _ in
-                MainActor.assumeIsolated { if view.isLoading { self?.barsHidden = false } }
-            },
         ]
-        #if os(iOS)
-        watches.append(view.scrollView.observe(\.contentOffset, options: [.old, .new]) { [weak self] scroll, change in
-            guard let from = change.oldValue?.y, let to = change.newValue?.y else { return }
-            MainActor.assumeIsolated { self?.scrolled(scroll, by: to - from) }
-        })
-        #endif
     }
-
-    #if os(iOS)
-    private func scrolled(_ scroll: UIScrollView, by dy: CGFloat) {
-        // Only your own scrolling counts, not a page moving itself.
-        guard scroll.isDragging || scroll.isDecelerating, dy != 0 else { return }
-        travel = (travel >= 0) == (dy >= 0) ? travel + dy : dy
-        let inset = scroll.adjustedContentInset
-        let top = scroll.contentOffset.y <= -inset.top + 8
-        let end = scroll.contentOffset.y + scroll.bounds.height >= scroll.contentSize.height + inset.bottom - 8
-        let hide = !top && !end && travel > 24
-        let show = top || end || travel < -24
-        if hide, !barsHidden { barsHidden = true } else if show, barsHidden { barsHidden = false }
-    }
-    #endif
 }
 
 /// The page open at each port's address, kept for the app's life.
