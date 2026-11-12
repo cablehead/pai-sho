@@ -410,13 +410,13 @@ async fn a_port_blocked_at_first_still_binds() {
 
     // Occupy the address b will project onto, so its first bind attempt
     // fails. b announces nothing new afterwards, so without a retry the port
-    // would stay dark.
-    let blocker = TcpListener::bind(SocketAddr::from((
-        IpAddr::V4(Ipv4Addr::new(127, 0, 1, 2)),
-        port,
-    )))
-    .await
-    .unwrap();
+    // would stay dark. The address has to exist before anything can bind it;
+    // on Linux all of 127.0.0.0/8 already does and this is a no-op.
+    let surface_ip = IpAddr::V4(Ipv4Addr::new(127, 0, 1, 2));
+    crate::surface::ensure_addr(surface_ip).unwrap();
+    let blocker = TcpListener::bind(SocketAddr::from((surface_ip, port)))
+        .await
+        .unwrap();
 
     a.request(Request::Expose {
         port,
