@@ -210,7 +210,7 @@ pai-sho [--socket <path>] <command>
 | `-a, --accept` | | Take up an invitation, or a peer's key, on startup (repeatable) |
 | `-e, --expose` | | Expose port to the `--accept` peers (repeat or comma-separate) |
 | `--key` | `~/.local/state/pai-sho/key` | Secret key path (created if missing) |
-| `--tun` | | Put surfaces on a private TUN network (`utun` on macOS, a pre-created device like `ps0` on Linux); the resolver answers at `10.99.0.53:53` |
+| `--tun` | | Put surfaces on a private TUN network (`utun` on macOS, a pre-created device like `ps0` on Linux, `tunN` from the tuntap driver on illumos); the resolver answers at `10.99.0.53:53` |
 | `--resolver` | | Loopback mode, an alternative to `--tun`: serve the `*.pai-sho` resolver on this UDP address (e.g. `127.0.0.1:5353`) |
 | `--name` | | This node's own name. The resolver answers `<name>.pai-sho` with `--host`, so a service reached locally and from a peer has one origin, which is what CORS needs |
 | `--socket-owner` | | Username to own the control socket, chowned right after bind. Lets the CLI skip sudo when the daemon runs as root |
@@ -262,7 +262,12 @@ network interface. The daemon sits at `10.99.0.1`, peers get addresses on
 `10.99.1.x`, and the resolver answers at `10.99.0.53:53`. On Linux the
 interface is created ahead of time and owned by the daemon's user, so the daemon
 needs no elevated capability. On macOS the daemon creates a utun itself, which
-needs root.
+needs root. On illumos it creates a `tunN` with the tuntap driver (OmniOS
+`driver/tuntap`), which needs root or the `sys_ip_config` and `sys_net_config`
+privileges. `--tun tun0` asks for unit 0, so firewall rules can name the
+interface; any other name takes the next free unit. In a zone, add `/dev/tun`
+to the zone and give it exclusive-IP networking. The interface goes away when
+the daemon exits.
 
 **Surfaces.** A peer's ports all live at one local address, under the name you
 gave it, or the first eight characters of its key if you gave none. That address

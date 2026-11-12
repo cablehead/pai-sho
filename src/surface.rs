@@ -7,8 +7,10 @@
 //! Claiming the address is behind one helper so the rest of the daemon never
 //! shells out. `ensure_addr` / `remove_addr` is a no-op on Linux, where all of
 //! `127.0.0.0/8` already routes to `lo`, and an `ifconfig lo0 alias` on macOS,
-//! where extra loopback addresses must be added. The TUN-backed backend that
-//! claims a whole subnet in one privileged step replaces this seam later.
+//! where extra loopback addresses must be added. illumos also needs them
+//! added, as logical interfaces on `lo0` (`ifconfig lo0 addif`). The
+//! TUN-backed backend that claims a whole subnet in one privileged step
+//! replaces this seam later.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -91,7 +93,66 @@ fn del_addr(ip: IpAddr) -> Result<()> {
     run("ifconfig", &["lo0", "-alias", &ip.to_string()])
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+/// The addresses `add_addr` created in this process. `del_addr` removes only
+/// these, so an address that was already configured, for example one the
+/// global zone assigned to this zone, is used as is and never taken away.
+#[cfg(target_os = "illumos")]
+static ADDED: std::sync::Mutex<std::collections::BTreeSet<IpAddr>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+/// illumos only accepts a bind to an address configured on an interface, and
+/// `lo0` carries just `127.0.0.1`. Each surface gets its own logical interface
+/// on `lo0`. This needs the `sys_ip_config` privilege, and in a zone it only
+/// works with exclusive-IP networking.
+#[cfg(target_os = "illumos")]
+fn add_addr(ip: IpAddr) -> Result<()> {
+    if is_local(ip) {
+        return Ok(());
+    }
+    let cidr = format!("{}/{}", ip, if ip.is_ipv4() { 32 } else { 128 });
+    run(
+        "/usr/sbin/ifconfig",
+        &["lo0", inet_family(ip), "addif", &cidr, "up"],
+    )
+    .context("adding a loopback address failed (use --ip 127.0.0.1 to avoid it)")?;
+    ADDED.lock().unwrap().insert(ip);
+    Ok(())
+}
+
+/// An address added by an earlier run of the daemon is not in `ADDED`, so it
+/// stays on `lo0` until the zone reboots or someone removes it by hand.
+#[cfg(target_os = "illumos")]
+fn del_addr(ip: IpAddr) -> Result<()> {
+    let mut added = ADDED.lock().unwrap();
+    if !added.contains(&ip) {
+        return Ok(());
+    }
+    run(
+        "/usr/sbin/ifconfig",
+        &["lo0", inet_family(ip), "removeif", &ip.to_string()],
+    )?;
+    added.remove(&ip);
+    Ok(())
+}
+
+#[cfg(target_os = "illumos")]
+fn inet_family(ip: IpAddr) -> &'static str {
+    if ip.is_ipv4() {
+        "inet"
+    } else {
+        "inet6"
+    }
+}
+
+/// Whether `ip` is already a local address. Binding to it is the cheapest
+/// check that agrees with what the listener will do later, and it keeps
+/// `add_addr` idempotent.
+#[cfg(target_os = "illumos")]
+fn is_local(ip: IpAddr) -> bool {
+    std::net::TcpListener::bind((ip, 0)).is_ok()
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "illumos")))]
 fn add_addr(ip: IpAddr) -> Result<()> {
     anyhow::bail!(
         "projecting {} needs a loopback alias, unsupported on this OS (use --ip 127.0.0.1)",
@@ -99,12 +160,12 @@ fn add_addr(ip: IpAddr) -> Result<()> {
     )
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "illumos")))]
 fn del_addr(_ip: IpAddr) -> Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "illumos"))]
 fn run(cmd: &str, args: &[&str]) -> Result<()> {
     let out = std::process::Command::new(cmd)
         .args(args)
@@ -212,5 +273,13 @@ mod tests {
         let lo = IpAddr::V4(Ipv4Addr::LOCALHOST);
         ensure_addr(lo).unwrap();
         remove_addr(lo).unwrap();
+    }
+
+    #[cfg(target_os = "illumos")]
+    #[test]
+    fn an_address_we_did_not_add_is_left_alone() {
+        // Removing it would run ifconfig, which fails without privileges or
+        // when the address does not exist. Leaving it alone always succeeds.
+        remove_addr(ip(254)).unwrap();
     }
 }

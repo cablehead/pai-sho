@@ -143,6 +143,136 @@ fn open_tun(name: &str) -> Result<RawFd> {
     Ok(fd)
 }
 
+/// illumos: create a tunN with the tuntap driver (OmniOS `driver/tuntap`), link
+/// it under IP, and configure the address and subnet route as on macOS. Needs
+/// root, or `sys_ip_config` and `sys_net_config`. In a zone, `/dev/tun` has to
+/// be added to the zone, and the zone needs exclusive-IP networking.
+///
+/// `--tun tunN` asks for unit N, so the interface name stays the same across
+/// restarts and firewall rules can name it. Any other name takes the next free
+/// unit.
+///
+/// The interface is linked with I_LINK rather than the I_PLINK ifconfig uses,
+/// so it exists only while the `/dev/udp` stream holding the link is open. That
+/// stream stays open for the life of the process. When the process exits, even
+/// by crashing, IP unplumbs the interface and drops its route.
+#[cfg(target_os = "illumos")]
+fn open_tun(name: &str) -> Result<RawFd> {
+    use libc::{c_char, c_int};
+    use std::os::fd::{FromRawFd, IntoRawFd, OwnedFd};
+
+    #[repr(C)]
+    struct StrIoctl {
+        ic_cmd: c_int,
+        ic_timout: c_int,
+        ic_len: c_int,
+        ic_dp: *mut c_char,
+    }
+    // From the driver's if_tun.h, and illumos <sys/sockio.h> and <sys/stropts.h>.
+    const TUNNEWPPA: c_int = ((b'T' as c_int) << 16) | 0x0001;
+    const IF_UNITSEL: c_int = 0x8004_7336_u32 as c_int; // _IOW('s', 54, int)
+    const RMSGD: c_int = 0x001;
+
+    fn open(path: &std::ffi::CStr) -> Result<OwnedFd> {
+        let fd = unsafe { libc::open(path.as_ptr(), libc::O_RDWR) };
+        anyhow::ensure!(
+            fd >= 0,
+            "open {} failed (errno {})",
+            path.to_string_lossy(),
+            errno()
+        );
+        Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    }
+
+    let requested: c_int = name
+        .strip_prefix("tun")
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(-1);
+
+    // The packet end. TUNNEWPPA creates a unit and makes this its control
+    // stream: what we write here comes out of tunN, and what IP sends to
+    // tunN is read here. Closing it destroys the unit.
+    let fd = open(c"/dev/tun").map_err(|e| {
+        anyhow::anyhow!("{e}; is driver/tuntap installed, and /dev/tun added to this zone?")
+    })?;
+    let mut ppa = requested;
+    let mut req = StrIoctl {
+        ic_cmd: TUNNEWPPA,
+        ic_timout: 0,
+        ic_len: std::mem::size_of::<c_int>() as c_int,
+        ic_dp: &mut ppa as *mut c_int as *mut c_char,
+    };
+    let unit = unsafe { libc::ioctl(fd.as_raw_fd(), libc::I_STR, &mut req as *mut StrIoctl) };
+    anyhow::ensure!(
+        unit >= 0,
+        "creating a tun unit failed (errno {}){}",
+        errno(),
+        if requested >= 0 {
+            format!("; is tun{} already in use?", requested)
+        } else {
+            String::new()
+        }
+    );
+    let ifname = format!("tun{}", unit);
+
+    // The IP end: a second stream on the same unit with the ip module pushed,
+    // linked under a /dev/udp stream so IP plumbs it as tunN.
+    let if_fd = open(c"/dev/tun")?;
+    let r = unsafe { libc::ioctl(if_fd.as_raw_fd(), libc::I_PUSH, c"ip".as_ptr()) };
+    anyhow::ensure!(
+        r >= 0,
+        "pushing ip onto {} failed (errno {})",
+        ifname,
+        errno()
+    );
+    let r = unsafe { libc::ioctl(if_fd.as_raw_fd(), IF_UNITSEL, &unit as *const c_int) };
+    anyhow::ensure!(r >= 0, "selecting unit {} failed (errno {})", unit, errno());
+    let ip_fd = open(c"/dev/udp")?;
+    let r = unsafe { libc::ioctl(ip_fd.as_raw_fd(), libc::I_LINK, if_fd.as_raw_fd()) };
+    anyhow::ensure!(
+        r >= 0,
+        "linking {} under IP failed (errno {}); need root or sys_ip_config",
+        ifname,
+        errno()
+    );
+    drop(if_fd);
+    info!("created {}", ifname);
+
+    // Configure the address and subnet route. Same layout as macOS: 10.99.0.1
+    // local, 10.99.0.2 the point-to-point peer, and the /16 routed into tunN so
+    // packets to any surface address reach the stack. The route is an
+    // interface route through our own 10.99.0.1, so IP deletes it along with
+    // tunN. A route through the gateway 10.99.0.2 would outlive the interface
+    // and make the next start fail with "entry exists". On failure, returning
+    // drops ip_fd, and IP removes the interface.
+    run(
+        "/usr/sbin/ifconfig",
+        &[&ifname, "10.99.0.1", "10.99.0.2", "up"],
+    )?;
+    run(
+        "/usr/sbin/route",
+        &[
+            "-n",
+            "add",
+            "-interface",
+            "-net",
+            "10.99.0.0/16",
+            "10.99.0.1",
+        ],
+    )?;
+
+    // By default a STREAMS read can return several queued packets joined
+    // together. Message-discard mode returns exactly one per read.
+    let r = unsafe { libc::ioctl(fd.as_raw_fd(), libc::I_SRDOPT, RMSGD) };
+    anyhow::ensure!(r >= 0, "I_SRDOPT on {} failed (errno {})", ifname, errno());
+
+    // Kept open for the life of the process; see above.
+    let _ = ip_fd.into_raw_fd();
+    let fd = fd.into_raw_fd();
+    set_nonblocking(fd);
+    Ok(fd)
+}
+
 /// macOS: create a utun via the SYSPROTO_CONTROL socket, configure its address
 /// and the subnet route, and return the fd. Needs root (utun creation and
 /// ifconfig/route both do). The `name` arg is ignored; the kernel assigns the
@@ -223,7 +353,7 @@ fn set_nonblocking(fd: RawFd) {
 }
 
 /// Read one IP packet off the tun. On macOS, strip the 4-byte utun
-/// address-family header; on Linux (IFF_NO_PI) there is none.
+/// address-family header; on Linux (IFF_NO_PI) and illumos there is none.
 fn tun_read(fd: RawFd) -> io::Result<Vec<u8>> {
     #[cfg(target_os = "macos")]
     let header = 4usize;
@@ -274,19 +404,26 @@ fn tun_write(fd: RawFd, pkt: &[u8]) -> io::Result<()> {
     }
 }
 
-/// Run a command, erroring on nonzero exit. Used on macOS to configure the utun.
-#[cfg(target_os = "macos")]
+/// Run a command, erroring on nonzero exit. Used on macOS and illumos to
+/// configure the interface.
+#[cfg(any(target_os = "macos", target_os = "illumos"))]
 fn run(cmd: &str, args: &[&str]) -> Result<()> {
     let out = std::process::Command::new(cmd)
         .args(args)
         .output()
         .with_context(|| format!("failed to run {}", cmd))?;
+    // illumos route(8) reports failures such as "entry exists" on stdout.
+    let output = if out.stderr.is_empty() {
+        &out.stdout
+    } else {
+        &out.stderr
+    };
     anyhow::ensure!(
         out.status.success(),
         "{} {}: {}",
         cmd,
         args.join(" "),
-        String::from_utf8_lossy(&out.stderr).trim()
+        String::from_utf8_lossy(output).trim()
     );
     Ok(())
 }
