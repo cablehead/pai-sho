@@ -15,7 +15,7 @@ so we run a demo machine for review.
    scan the code. Allow the camera when asked.
 3. Enter any name, such as "demo", and tap Accept.
 4. The demo machine appears with port 47831. Once it shows as online, tap
-   the port to open its page, "Hello from the demo peer".
+   the port to open its page, which shows 127.0.0.1:47831.
 
 Each invitation works once and expires after 5 minutes. Reload the page
 for a new one. The camera is used only to scan invitations, and local
