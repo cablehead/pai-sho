@@ -65,3 +65,8 @@ Asked when a build is submitted:
   (encryption limited to standard algorithms, not Apple's).
 - France stays off under Pricing and Availability until the ANSSI
   declaration is approved.
+
+## Review notes
+
+See `review-notes.md`. The demo machine is the pai-sho site at
+https://pai-sho.ndyg.cross.stream (its source is the pai-sho-site repo).
