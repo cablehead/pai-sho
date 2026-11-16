@@ -12,6 +12,7 @@
 		A60000000000000000000004 /* PaiShoKit in Frameworks */ = {isa = PBXBuildFile; productRef = B20000000000000000000001 /* PaiShoKit */; };
 		A60000000000000000000005 /* PaiShoUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000008 /* PaiShoUITests.swift */; };
 		A60000000000000000000007 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000D /* Assets.xcassets */; };
+		A60000000000000000000008 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000E /* PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -37,6 +38,7 @@
 		A1000000000000000000000C /* LaunchCheck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchCheck.swift; sourceTree = "<group>"; };
 		A1000000000000000000000A /* build-rust.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "build-rust.sh"; sourceTree = "<group>"; };
 		A1000000000000000000000D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A1000000000000000000000E /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -79,6 +81,7 @@
 				A10000000000000000000004 /* Info.plist */,
 				A1000000000000000000000B /* Info-macOS.plist */,
 				A1000000000000000000000D /* Assets.xcassets */,
+				A1000000000000000000000E /* PrivacyInfo.xcprivacy */,
 			);
 			path = PaiSho;
 			sourceTree = "<group>";
@@ -185,6 +188,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A60000000000000000000007 /* Assets.xcassets in Resources */,
+				A60000000000000000000008 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
