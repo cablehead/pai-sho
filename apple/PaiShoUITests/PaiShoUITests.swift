@@ -41,6 +41,41 @@ final class PaiShoUITests: XCTestCase {
         attach(app, "page")
     }
 
+    /// The App Store screenshots: the add sheet, the peer with its ports, and
+    /// one port's page. PAI_SHO_SHOTS_NAME names the peer; PAI_SHO_PORT is
+    /// the port whose page is shown. Skipped without PAI_SHO_SHOTS_NAME.
+    func testStoreScreenshots() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let invite = env["PAI_SHO_INVITE"], let port = env["PAI_SHO_PORT"],
+              let peer = env["PAI_SHO_SHOTS_NAME"], let expect = env["PAI_SHO_EXPECT"]
+        else { throw XCTSkip("set TEST_RUNNER_PAI_SHO_SHOTS_NAME, _INVITE, _PORT and _EXPECT") }
+
+        let app = XCUIApplication()
+        app.launchArguments = ["-invite", invite]
+        app.launch()
+        let name = app.textFields["name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 10))
+        name.tap()
+        // A fresh simulator's keyboard shows a one-time typing tip over the sheet.
+        let tip = app.buttons["Continue"]
+        sleep(1)
+        if tip.exists { tip.tap() }
+        name.typeText(peer)
+        attach(app, "1-add")
+        app.buttons["Accept"].tap()
+
+        let row = app.buttons["port-\(port)"]
+        XCTAssertTrue(row.waitForExistence(timeout: 60), "port \(port) never listed")
+        expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: row)
+        waitForExpectations(timeout: 60)
+        sleep(2)
+        attach(app, "2-peers")
+        row.tap()
+        XCTAssertTrue(app.webViews.staticTexts[expect].waitForExistence(timeout: 30), "page never showed \(expect)")
+        sleep(2)
+        attach(app, "3-page")
+    }
+
     /// A browser's controls under the page: back and forward through its
     /// history, and a button out to the main screen from anywhere in it.
     func testPageControls() throws {
