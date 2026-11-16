@@ -14,7 +14,7 @@ size is scaled from those.
 - **Copyright:** 2026 cross.stream
 - **Support URL:** https://github.com/cablehead/pai-sho/issues
 - **Marketing URL:** https://github.com/cablehead/pai-sho
-- **Privacy Policy URL:** https://github.com/cablehead/pai-sho/blob/main/docs/privacy.md
+- **Privacy Policy URL:** https://pai-sho.ndyg.cross.stream/privacy
 
 ## Promotional text (170 max)
 
