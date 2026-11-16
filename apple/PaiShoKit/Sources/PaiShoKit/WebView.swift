@@ -67,6 +67,23 @@ struct WebView: PageRepresentable {
             return (.useCredential, URLCredential(trust: trust))
         }
 
+        /// A link off the peer's page goes to the system browser, as a new-tab
+        /// link does: this view shows peers' pages, not the open web.
+        func webView(
+            _ view: WKWebView,
+            decidePolicyFor action: WKNavigationAction
+        ) async -> WKNavigationActionPolicy {
+            guard action.navigationType == .linkActivated, action.targetFrame?.isMainFrame ?? false,
+                  let url = action.request.url, !Coordinator.opensHere(url, from: view.url)
+            else { return .allow }
+            #if os(iOS)
+            _ = await UIApplication.shared.open(url)
+            #else
+            NSWorkspace.shared.open(url)
+            #endif
+            return .cancel
+        }
+
         /// A link that opens a new tab (`target="_blank"`, as n2's card links
         /// do). There are no tabs here: a peer's page opens in this view, and
         /// anything else in the system browser. Without this, WebKit asks for
