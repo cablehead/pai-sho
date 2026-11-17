@@ -48,7 +48,7 @@ pub enum Request {
     Key,
     /// Project a peer's surface to a local address. `peer` is a key or the name
     /// it was given; `ip` is chosen if given, else allocated; `name` renames the
-    /// surface, which is what the resolver answers `<name>.pai-sho` with.
+    /// peer: `list`, `--to` and the resolver's `<name>.pai-sho` all use it.
     Project {
         peer: String,
         ip: Option<String>,
