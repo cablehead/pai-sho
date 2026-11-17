@@ -161,7 +161,9 @@ struct PeerList<Controls: View>: View {
     let store: PeerStore
     @Binding var selection: PortID?
     let controls: Controls
-    @State private var forgetting: Peer?
+    /// The row a peer's forgetting was asked from, which the confirmation
+    /// points at.
+    @State private var forgetting: String?
     @State private var renaming: Peer?
     @State private var newName = ""
     @State private var failure: Failure?
@@ -172,23 +174,20 @@ struct PeerList<Controls: View>: View {
             ForEach(store.peers) { peer in
                 Section {
                     if peer.ports.isEmpty {
-                        Text("No ports")
-                            .foregroundStyle(.tertiary)
-                            .contextMenu { peerActions(peer) }
-                            .swipeActions { peerActions(peer) }
+                        peerMenu(Text("No ports").foregroundStyle(.tertiary), peer, row: "\(peer.key)/none")
                     }
                     ForEach(peer.ports, id: \.self) { port in
                         let id = PortID(peer: peer.key, port: port)
-                        NavigationLink(value: id) {
-                            PortRow(port: port, bound: peer.address(port: port) != nil, title: store.pageTitles[id])
-                        }
-                        .accessibilityIdentifier("port-\(port)")
-                        .contextMenu { peerActions(peer) }
-                        .swipeActions { peerActions(peer) }
+                        peerMenu(
+                            NavigationLink(value: id) {
+                                PortRow(port: port, bound: peer.address(port: port) != nil, title: store.pageTitles[id])
+                            }
+                            .accessibilityIdentifier("port-\(port)"),
+                            peer, row: "\(peer.key)/\(port)"
+                        )
                     }
                 } header: {
-                    PeerHeader(title: store.title(for: peer), status: store.status(of: peer))
-                        .contextMenu { peerActions(peer) }
+                    peerMenu(PeerHeader(title: store.title(for: peer), status: store.status(of: peer)), peer, row: "\(peer.key)/header", swipe: false)
                         .accessibilityIdentifier("peer-\(store.title(for: peer))")
                 }
             }
@@ -196,24 +195,6 @@ struct PeerList<Controls: View>: View {
             } footer: {
                 Credits()
             }
-        }
-        .confirmationDialog(
-            "Forget \(forgetting.map { store.title(for: $0) } ?? "")?",
-            isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } }),
-            titleVisibility: .visible,
-            presenting: forgetting
-        ) { peer in
-            Button("Forget", role: .destructive) {
-                Task {
-                    do {
-                        try await store.forget(peer)
-                    } catch {
-                        failure = Failure(title: "Couldn't forget it", message: error.localizedDescription)
-                    }
-                }
-            }
-        } message: { _ in
-            Text("Its ports close here. To connect again, take up a new invitation from it.")
         }
         .alert(
             "Rename \(renaming.map { store.title(for: $0) } ?? "")",
@@ -275,9 +256,9 @@ extension PeerList {
     /// What a long press, or a swipe on a peer's ports, offers: rename it, or
     /// forget it after asking.
     @ViewBuilder
-    func peerActions(_ peer: Peer) -> some View {
+    func peerActions(_ peer: Peer, row: String) -> some View {
         Button(role: .destructive) {
-            forgetting = peer
+            forgetting = row
         } label: {
             Label("Forget \(store.title(for: peer))", systemImage: "trash")
         }
@@ -287,6 +268,37 @@ extension PeerList {
         } label: {
             Label("Rename", systemImage: "pencil")
         }
+    }
+}
+
+extension PeerList {
+    /// A row of a peer's, with its actions on a long press and a swipe. The
+    /// confirmation to forget it points at this row, so it sits next to the
+    /// finger rather than wherever the list begins.
+    func peerMenu(_ content: some View, _ peer: Peer, row: String, swipe: Bool = true) -> some View {
+        content
+            .contextMenu { peerActions(peer, row: row) }
+            .swipeActions { if swipe { peerActions(peer, row: row) } }
+            .confirmationDialog(
+                "Forget \(store.title(for: peer))?",
+                isPresented: Binding(
+                    get: { forgetting == row },
+                    set: { if !$0, forgetting == row { forgetting = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Forget", role: .destructive) {
+                    Task {
+                        do {
+                            try await store.forget(peer)
+                        } catch {
+                            failure = Failure(title: "Couldn't forget it", message: error.localizedDescription)
+                        }
+                    }
+                }
+            } message: {
+                Text("Its ports close here. To connect again, take up a new invitation from it.")
+            }
     }
 }
 
