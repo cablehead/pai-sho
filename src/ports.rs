@@ -10,7 +10,7 @@
 //! A surface address per peer (Linux, macOS) never needs this: each port keeps
 //! its own number at its peer's address.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -53,22 +53,18 @@ pub fn first_choice(records: &[PortRecord], key: &str, port: u16) -> Option<u16>
 
 /// The table, persisted as JSON next to the daemon key
 pub struct PortStore {
-    path: PathBuf,
+    file: crate::json_file::JsonFile<PortRecord>,
 }
 
 impl PortStore {
     pub fn new(path: PathBuf) -> Self {
-        Self { path }
+        Self {
+            file: crate::json_file::JsonFile::new(path),
+        }
     }
 
     pub fn load(&self) -> Result<Vec<PortRecord>> {
-        if !self.path.exists() {
-            return Ok(Vec::new());
-        }
-        let data = std::fs::read(&self.path)
-            .with_context(|| format!("failed to read {}", self.path.display()))?;
-        serde_json::from_slice(&data)
-            .with_context(|| format!("failed to parse {}", self.path.display()))
+        self.file.load()
     }
 
     /// Record where this peer's port listens, replacing what was there.
@@ -96,13 +92,7 @@ impl PortStore {
     }
 
     fn save(&self, records: &[PortRecord]) -> Result<()> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
-        }
-        let data = serde_json::to_vec_pretty(records)?;
-        std::fs::write(&self.path, data)
-            .with_context(|| format!("failed to write {}", self.path.display()))
+        self.file.save(records)
     }
 }
 

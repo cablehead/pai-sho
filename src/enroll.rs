@@ -4,7 +4,7 @@
 //! claim pins the accepter's key under the name the inviter chose, if any, and
 //! consumes the code. Pins persist across restarts. See ADR 0006.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -86,22 +86,18 @@ pub struct Pin {
 
 /// Pinned peers, persisted as JSON next to the daemon key
 pub struct Pins {
-    path: PathBuf,
+    file: crate::json_file::JsonFile<Pin>,
 }
 
 impl Pins {
     pub fn new(path: PathBuf) -> Self {
-        Self { path }
+        Self {
+            file: crate::json_file::JsonFile::new(path),
+        }
     }
 
     pub fn load(&self) -> Result<Vec<Pin>> {
-        if !self.path.exists() {
-            return Ok(Vec::new());
-        }
-        let data = std::fs::read(&self.path)
-            .with_context(|| format!("failed to read {}", self.path.display()))?;
-        serde_json::from_slice(&data)
-            .with_context(|| format!("failed to parse {}", self.path.display()))
+        self.file.load()
     }
 
     /// Pin a peer that calls us. A peer we already dial keeps dialing.
@@ -144,13 +140,7 @@ impl Pins {
     }
 
     fn save(&self, pins: &[Pin]) -> Result<()> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
-        }
-        let data = serde_json::to_vec_pretty(pins)?;
-        std::fs::write(&self.path, data)
-            .with_context(|| format!("failed to write {}", self.path.display()))
+        self.file.save(pins)
     }
 }
 

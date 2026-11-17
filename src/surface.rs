@@ -128,22 +128,18 @@ pub struct SurfaceRecord {
 
 /// Persisted surfaces, stored alongside the pins as `<key>.surfaces.json`.
 pub struct SurfaceStore {
-    path: PathBuf,
+    file: crate::json_file::JsonFile<SurfaceRecord>,
 }
 
 impl SurfaceStore {
     pub fn new(path: PathBuf) -> Self {
-        Self { path }
+        Self {
+            file: crate::json_file::JsonFile::new(path),
+        }
     }
 
     pub fn load(&self) -> Result<Vec<SurfaceRecord>> {
-        if !self.path.exists() {
-            return Ok(Vec::new());
-        }
-        let data = std::fs::read(&self.path)
-            .with_context(|| format!("failed to read {}", self.path.display()))?;
-        serde_json::from_slice(&data)
-            .with_context(|| format!("failed to parse {}", self.path.display()))
+        self.file.load()
     }
 
     pub fn add(&self, key: &str, ip: IpAddr, name: Option<String>) -> Result<()> {
@@ -164,13 +160,7 @@ impl SurfaceStore {
     }
 
     fn save(&self, records: &[SurfaceRecord]) -> Result<()> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
-        }
-        let data = serde_json::to_vec_pretty(records)?;
-        std::fs::write(&self.path, data)
-            .with_context(|| format!("failed to write {}", self.path.display()))
+        self.file.save(records)
     }
 }
 
