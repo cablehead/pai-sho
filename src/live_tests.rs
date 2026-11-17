@@ -884,3 +884,31 @@ async fn a_peer_being_redialed_lists_as_dialing() {
     })
     .await;
 }
+
+/// An invitation that expired before it was taken up leaves the peer dialing
+/// with a code the inviter refuses. Taking up a fresh invitation from the same
+/// machine replaces the code, instead of failing because the peer is known.
+#[tokio::test]
+async fn a_fresh_invitation_replaces_a_refused_one() {
+    let (a, b) = pair(IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
+    let (a_key, b_key) = (a.key(), b.key());
+
+    // A code `a` never issued stands in for one that expired.
+    let stale = format!("{}.{}", a_key, "00".repeat(16));
+    match b
+        .request(Request::Accept {
+            handle: stale,
+            name: Some("a".to_string()),
+        })
+        .await
+    {
+        Response::Ok => {}
+        other => panic!("accept failed: {:?}", other),
+    }
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(sees_online(&a, &b_key, "b").await.is_none());
+
+    enroll(&a, &b, "b").await;
+    until(20, || sees_online(&b, &a_key, "a")).await;
+    until(20, || sees_online(&a, &b_key, "b")).await;
+}

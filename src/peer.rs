@@ -68,8 +68,11 @@ struct Peer {
     /// Its connection loop is trying to reach it: waiting out the backoff,
     /// or dialing.
     dialing: AtomicBool,
-    /// An invitation's one-time code, presented on connect by the accepter
-    enroll_token: Option<String>,
+    /// An invitation's one-time code, presented on connect by the accepter.
+    /// A fresh invitation from the same peer replaces it.
+    enroll_token: std::sync::Mutex<Option<String>>,
+    /// Wakes the connection loop to dial now, when a new code arrives.
+    redial: Notify,
     connection: RwLock<Option<Connection>>,
     /// Who opened the connection above. Written under its write lock, so the
     /// two move together.
@@ -115,7 +118,8 @@ impl Peer {
             }),
             dial_attempts: AtomicU64::new(0),
             dialing: AtomicBool::new(false),
-            enroll_token,
+            enroll_token: std::sync::Mutex::new(enroll_token),
+            redial: Notify::new(),
             connection: RwLock::new(connection),
             conn_dialed_by_us: AtomicBool::new(false),
             exposed_ports: RwLock::new(Vec::new()),
@@ -224,8 +228,16 @@ impl PeerManager {
         name: Option<String>,
         code: Option<String>,
     ) -> Result<()> {
-        if self.peers.contains_key(&endpoint_id) {
-            return Err(anyhow!("peer already exists"));
+        if let Some(peer) = self.peers.get(&endpoint_id).map(|p| p.clone()) {
+            // Taken up again, say because the first invitation expired before
+            // it reached the peer, which then refuses it on every dial. Present
+            // the new code from now on, and dial now rather than after the
+            // backoff.
+            if let Some(code) = code {
+                *peer.enroll_token.lock().unwrap() = Some(code);
+                peer.redial.notify_one();
+            }
+            return Ok(());
         }
         // Pin it first, so a restart dials it again rather than forgetting it.
         self.pins
@@ -361,6 +373,10 @@ impl PeerManager {
                 // Wait for backoff, but wake early if an incoming connection arrives
                 tokio::select! {
                     _ = tokio::time::sleep(backoff.delay()) => {}
+                    _ = peer.redial.notified() => {
+                        info!("{} has a new invitation code, dialing now", peer.endpoint_id);
+                        backoff.reset();
+                    }
                     _ = peer.conn_notify.notified() => {
                         info!("{} reconnected via incoming connection", peer.endpoint_id);
                         backoff.reset();
@@ -436,8 +452,9 @@ impl PeerManager {
                 }
                 // Re-present the enroll token in case the peer never
                 // processed it (it ignores the message once we are pinned)
-                if let Some(token) = &peer.enroll_token {
-                    let msg = PeerMessage::enroll(token.clone());
+                let token = peer.enroll_token.lock().unwrap().clone();
+                if let Some(token) = token {
+                    let msg = PeerMessage::enroll(token);
                     if let Err(e) = Self::send_message(&conn, &msg).await {
                         warn!("failed to send enroll token: {}", e);
                     }
@@ -481,7 +498,7 @@ impl PeerManager {
 
         // The dialer already announced version on its Enroll. Sending another
         // Enroll with an empty token would race that claim on the other side.
-        if peer.enroll_token.is_none() {
+        if peer.enroll_token.lock().unwrap().is_none() {
             Self::send_version(peer).await;
         }
 
