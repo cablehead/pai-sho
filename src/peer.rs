@@ -224,6 +224,14 @@ impl PeerManager {
         surface::allocate(&taken, self.surface_base())
     }
 
+    /// Call a peer by a new name, here and in its pin, so `list`, `--to` and
+    /// a restart all go by it. Its surface keeps its old name until projected.
+    async fn rename(self: &Arc<Self>, peer: &Arc<Peer>, name: String) {
+        *peer.label.write().unwrap() = Some(name.clone());
+        let actions = self.session.lock().unwrap().rename(&peer.endpoint_id, name);
+        self.apply(peer, actions).await;
+    }
+
     /// Take up an invitation, or reach a peer known by key. We dial this peer
     /// and keep dialing it. A code, when there is one, is presented on connect
     /// and on every reconnect (the peer ignores it once we are known).
@@ -241,6 +249,18 @@ impl PeerManager {
             if let Some(code) = code {
                 *peer.enroll_token.lock().unwrap() = Some(code);
                 peer.redial.notify_one();
+            }
+            // The name given this time wins. A projected peer projects again
+            // at the same address, so its surface answers to the new name too.
+            if let Some(name) = name.filter(|n| peer.label().as_ref() != Some(n)) {
+                let surface = peer.surface.read().await.clone();
+                match surface {
+                    Some(s) => {
+                        self.project(&endpoint_id.to_string(), Some(s.ip), Some(name))
+                            .await?
+                    }
+                    None => self.rename(&peer, name).await,
+                }
             }
             return Ok(());
         }
@@ -1338,9 +1358,7 @@ impl PeerManager {
         // `--to` and the resolver all go by the new name. Without --as the
         // surface takes the peer's current label, so it still has a handle.
         if let Some(name) = &name {
-            *peer.label.write().unwrap() = Some(name.clone());
-            let actions = self.session.lock().unwrap().rename(&id, name.clone());
-            self.apply(&peer, actions).await;
+            self.rename(&peer, name.clone()).await;
         }
         let name = name.or_else(|| peer.label());
         let ip = match ip {

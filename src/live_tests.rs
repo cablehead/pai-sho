@@ -934,7 +934,8 @@ async fn a_peer_being_redialed_lists_as_dialing() {
 
 /// An invitation that expired before it was taken up leaves the peer dialing
 /// with a code the inviter refuses. Taking up a fresh invitation from the same
-/// machine replaces the code, instead of failing because the peer is known.
+/// machine replaces the code, instead of failing because the peer is known,
+/// and the name given the second time replaces the first.
 #[tokio::test]
 async fn a_fresh_invitation_replaces_a_refused_one() {
     let (a, b) = pair(IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
@@ -945,7 +946,7 @@ async fn a_fresh_invitation_replaces_a_refused_one() {
     match b
         .request(Request::Accept {
             handle: stale,
-            name: Some("a".to_string()),
+            name: Some("old".to_string()),
         })
         .await
     {
