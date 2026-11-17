@@ -127,6 +127,50 @@ final class PaiShoUITests: XCTestCase {
         attach(app, "5-gone")
     }
 
+    /// A peer can be renamed after it's added: long-press its port, Rename.
+    func testRename() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let invite = env["PAI_SHO_INVITE"], let port = env["PAI_SHO_PORT"]
+        else { throw XCTSkip("set TEST_RUNNER_PAI_SHO_INVITE and _PORT") }
+        let app = XCUIApplication()
+        app.launchArguments = ["-invite", invite]
+        app.launch()
+        let name = app.textFields["name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 10))
+        name.tap()
+        sleep(1)
+        if app.buttons["Continue"].exists { app.buttons["Continue"].tap() }
+        name.typeText("demo")
+        app.buttons["Accept"].tap()
+        XCTAssertTrue(app.buttons["port-\(port)"].waitForExistence(timeout: 60))
+        sleep(2)
+        attach(app, "1-added")
+
+        app.buttons["port-\(port)"].press(forDuration: 1.5)
+        let rename = app.buttons["Rename"]
+        XCTAssertTrue(rename.waitForExistence(timeout: 5))
+        attach(app, "2-menu")
+        rename.tap()
+        let field = app.alerts.textFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        if let old = field.value as? String {
+            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: old.count))
+        }
+        field.typeText("laptop")
+        attach(app, "3-typing")
+        app.alerts.buttons["Rename"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["peer-laptop"].waitForExistence(timeout: 10))
+        sleep(1)
+        attach(app, "4-renamed")
+
+        // pai-sho keeps the name: it's still there after a restart.
+        app.terminate()
+        app.launchArguments = []
+        app.launch()
+        XCTAssertTrue(app.descendants(matching: .any)["peer-laptop"].waitForExistence(timeout: 30))
+    }
+
     /// The credits under the peer list, and the licences they open.
     func testAcknowledgements() throws {
         let env = ProcessInfo.processInfo.environment

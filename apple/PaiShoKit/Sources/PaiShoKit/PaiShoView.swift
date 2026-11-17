@@ -162,7 +162,9 @@ struct PeerList<Controls: View>: View {
     @Binding var selection: PortID?
     let controls: Controls
     @State private var forgetting: Peer?
-    @State private var forgetFailed: String?
+    @State private var renaming: Peer?
+    @State private var newName = ""
+    @State private var failure: Failure?
 
     var body: some View {
         List(selection: $selection) {
@@ -172,8 +174,8 @@ struct PeerList<Controls: View>: View {
                     if peer.ports.isEmpty {
                         Text("No ports")
                             .foregroundStyle(.tertiary)
-                            .contextMenu { forgetButton(peer) }
-                            .swipeActions { forgetButton(peer) }
+                            .contextMenu { peerActions(peer) }
+                            .swipeActions { peerActions(peer) }
                     }
                     ForEach(peer.ports, id: \.self) { port in
                         let id = PortID(peer: peer.key, port: port)
@@ -181,12 +183,12 @@ struct PeerList<Controls: View>: View {
                             PortRow(port: port, bound: peer.address(port: port) != nil, title: store.pageTitles[id])
                         }
                         .accessibilityIdentifier("port-\(port)")
-                        .contextMenu { forgetButton(peer) }
-                        .swipeActions { forgetButton(peer) }
+                        .contextMenu { peerActions(peer) }
+                        .swipeActions { peerActions(peer) }
                     }
                 } header: {
                     PeerHeader(title: store.title(for: peer), status: store.status(of: peer))
-                        .contextMenu { forgetButton(peer) }
+                        .contextMenu { peerActions(peer) }
                         .accessibilityIdentifier("peer-\(store.title(for: peer))")
                 }
             }
@@ -206,17 +208,43 @@ struct PeerList<Controls: View>: View {
                     do {
                         try await store.forget(peer)
                     } catch {
-                        forgetFailed = error.localizedDescription
+                        failure = Failure(title: "Couldn't forget it", message: error.localizedDescription)
                     }
                 }
             }
         } message: { _ in
             Text("Its ports close here. To connect again, take up a new invitation from it.")
         }
-        .alert("Couldn't forget it", isPresented: Binding(get: { forgetFailed != nil }, set: { if !$0 { forgetFailed = nil } })) {
+        .alert(
+            "Rename \(renaming.map { store.title(for: $0) } ?? "")",
+            isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }),
+            presenting: renaming
+        ) { peer in
+            TextField("Name", text: $newName)
+                .autocorrectionDisabled()
+                #if os(iOS)
+                .textInputAutocapitalization(.never)
+                #endif
+            Button("Cancel", role: .cancel) {}
+            Button("Rename") {
+                let name = newName
+                Task {
+                    do {
+                        try await store.rename(peer, to: name)
+                    } catch {
+                        failure = Failure(title: "Couldn't rename it", message: error.localizedDescription)
+                    }
+                }
+            }
+        }
+        .alert(
+            failure?.title ?? "",
+            isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } }),
+            presenting: failure
+        ) { _ in
             Button("OK") {}
-        } message: {
-            Text(forgetFailed ?? "")
+        } message: { failure in
+            Text(failure.message)
         }
         .overlay {
             if store.peers.isEmpty {
@@ -244,14 +272,28 @@ struct PeerList<Controls: View>: View {
 }
 
 extension PeerList {
-    /// Forget a peer, after asking: on a long press, or a swipe on its ports.
-    func forgetButton(_ peer: Peer) -> some View {
+    /// What a long press, or a swipe on a peer's ports, offers: rename it, or
+    /// forget it after asking.
+    @ViewBuilder
+    func peerActions(_ peer: Peer) -> some View {
         Button(role: .destructive) {
             forgetting = peer
         } label: {
             Label("Forget \(store.title(for: peer))", systemImage: "trash")
         }
+        Button {
+            newName = peer.name ?? ""
+            renaming = peer
+        } label: {
+            Label("Rename", systemImage: "pencil")
+        }
     }
+}
+
+/// An action that failed, for the alert that says so.
+struct Failure {
+    let title: String
+    let message: String
 }
 
 /// "Version 0.5.4 (26)": the release, then the build, as TestFlight shows them.

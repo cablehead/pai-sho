@@ -239,8 +239,18 @@ public struct DaemonClient: Sendable {
     /// Forget a peer: close it, unbind its ports and revoke its grants. `peer`
     /// is its key.
     public func forget(peer: String) async throws {
-        let request = try JSONSerialization.data(withJSONObject: ["Forget": ["peer": peer]])
-        guard var line = String(data: request, encoding: .utf8) else { throw DaemonError.badResponse }
+        try await expectOk(["Forget": ["peer": peer]])
+    }
+
+    /// Call a peer by a new name. `peer` is its key.
+    public func rename(peer: String, to name: String) async throws {
+        try await expectOk(["Rename": ["peer": peer, "name": name]])
+    }
+
+    /// Send one request that answers Ok or an error.
+    private func expectOk(_ request: [String: Any]) async throws {
+        let data = try JSONSerialization.data(withJSONObject: request)
+        guard var line = String(data: data, encoding: .utf8) else { throw DaemonError.badResponse }
         line.append("\n")
         try Self.ok(fromReply: try await exchange(line))
     }

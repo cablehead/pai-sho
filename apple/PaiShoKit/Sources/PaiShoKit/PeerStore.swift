@@ -136,6 +136,15 @@ public final class PeerStore {
         await refresh()
     }
 
+    /// Call a peer by a new name, here and in pai-sho. A blank name changes
+    /// nothing.
+    public func rename(_ peer: Peer, to name: String) async throws {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != peer.name else { return }
+        try await client.rename(peer: peer.key, to: trimmed)
+        await refresh()
+    }
+
     public func peer(_ key: String) -> Peer? {
         peers.first { $0.key == key }
     }
