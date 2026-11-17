@@ -55,11 +55,18 @@ public struct PaiShoView<Controls: View>: View {
                     // pastes one, since it has no camera to point at a code.
                     ToolbarItemGroup(placement: .primaryAction) {
                         #if os(iOS)
+                        // Worded, not just an icon: this is how a peer is added.
                         Button {
                             sheet = .scan
                         } label: {
-                            Label("Scan", systemImage: "qrcode.viewfinder")
+                            // A toolbar shows a Label as its icon alone, so
+                            // the words go in by hand.
+                            HStack(spacing: 6) {
+                                Image(systemName: "qrcode.viewfinder")
+                                Text("Add peer")
+                            }
                         }
+                        .accessibilityIdentifier("Scan")
                         #else
                         Button {
                             sheet = .invite
