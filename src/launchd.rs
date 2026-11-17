@@ -286,9 +286,22 @@ fn start(reload: bool) -> Result<()> {
     }
     if loaded {
         launchctl(&["bootout", &domain])?;
+        wait_unloaded();
     }
     launchctl(&["bootstrap", "system", PLIST])?;
     Ok(())
+}
+
+/// `bootout` returns before the old daemon has gone. A `bootstrap` while it's
+/// still going fails with "5: Input/output error" and leaves nothing running,
+/// so wait, up to 10 seconds, for launchd to drop it.
+fn wait_unloaded() {
+    for _ in 0..50 {
+        if !service_loaded() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
 }
 
 fn service_loaded() -> bool {
