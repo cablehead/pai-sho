@@ -10,7 +10,9 @@
 //! where extra loopback addresses must be added. The TUN-backed backend that
 //! claims a whole subnet in one privileged step replaces this seam later.
 
-use anyhow::{Context, Result};
+#[cfg(target_os = "macos")]
+use anyhow::Context;
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
