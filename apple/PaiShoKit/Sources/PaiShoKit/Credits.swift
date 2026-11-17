@@ -9,7 +9,7 @@ struct Credits: View {
         VStack(spacing: 6) {
             Text(appVersion)
                 .accessibilityIdentifier("version")
-            Text("Pai Sho is [open source](https://github.com/cablehead/pai-sho) and runs on [iroh](https://github.com/n0-computer/iroh), from [number 0](https://n0.computer).")
+            Text("Pai Sho is [open source](https://github.com/cablehead/pai-sho).")
                 .multilineTextAlignment(.center)
             Button("Acknowledgements") { showing = true }
                 .buttonStyle(.borderless)

@@ -41,7 +41,7 @@ crates = sorted((packages[p] for p in seen if p != root), key=lambda p: (p["name
 # The intro is shown as one paragraph per line, so it isn't wrapped here.
 out = ["Pai Sho is open source, under the MIT licence: https://github.com/cablehead/pai-sho",
        "",
-       "It runs on iroh, from number 0 (https://n0.computer): https://github.com/n0-computer/iroh",
+       "It uses iroh, an open-source networking library by number 0 (https://n0.computer), with thanks: https://github.com/n0-computer/iroh. Pai Sho is not an official iroh project.",
        "",
        "Below is each Rust crate in the app, with its licence.",
        ""]

@@ -24,8 +24,8 @@ devices on the same network connect directly.
 Pai Sho is open source, under the MIT licence:
 https://github.com/cablehead/pai-sho
 
-It runs on iroh, an open-source peer-to-peer library from number 0:
-https://github.com/n0-computer/iroh. When two devices can't connect
-directly, their encrypted traffic goes through number 0's public relays. The
-credits are at the bottom of the app's peer list. Acknowledgements, there,
-lists each library in the app and its licence.
+It uses iroh, an open-source networking library by number 0:
+https://github.com/n0-computer/iroh. Pai Sho is not an official iroh
+project. When two devices can't connect directly, their encrypted traffic
+goes through number 0's public relays. Acknowledgements, at the bottom of
+the app's peer list, lists each library in the app and its licence.

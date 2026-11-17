@@ -43,8 +43,9 @@ To set up a Mac or Linux machine:
     pai-sho daemon (leave it running)
     pai-sho invite --qr --expose 8080 (in another terminal)
 
-Pai Sho runs on iroh, from number 0 (n0.computer). Both are open source. Pai
-Sho's code is at github.com/cablehead/pai-sho, under the MIT licence.
+Pai Sho is open source, under the MIT licence: github.com/cablehead/pai-sho.
+It uses iroh, an open-source networking library by number 0 (n0.computer),
+with thanks. Pai Sho is not an official iroh project.
 
 ## Keywords (100 max)
 
