@@ -76,6 +76,34 @@ final class PaiShoUITests: XCTestCase {
         attach(app, "3-page")
     }
 
+    /// The credits under the peer list, and the licences they open.
+    func testAcknowledgements() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let invite = env["PAI_SHO_INVITE"], let port = env["PAI_SHO_PORT"]
+        else { throw XCTSkip("set TEST_RUNNER_PAI_SHO_INVITE and _PORT") }
+
+        let app = XCUIApplication()
+        app.launchArguments = ["-invite", invite]
+        app.launch()
+        let name = app.textFields["name"]
+        if name.waitForExistence(timeout: 10) {
+            name.tap()
+            sleep(1)
+            if app.buttons["Continue"].exists { app.buttons["Continue"].tap() }
+            name.typeText("demo")
+            app.buttons["Accept"].tap()
+        }
+        XCTAssertTrue(app.buttons["port-\(port)"].waitForExistence(timeout: 60), "port \(port) never listed")
+        let credits = app.buttons["acknowledgements"]
+        XCTAssertTrue(credits.waitForExistence(timeout: 10))
+        sleep(2)
+        attach(app, "credits")
+        credits.tap()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'number 0'")).firstMatch.waitForExistence(timeout: 10))
+        sleep(1)
+        attach(app, "acknowledgements")
+    }
+
     /// A browser's controls under the page: back and forward through its
     /// history, and a button out to the main screen from anywhere in it.
     func testPageControls() throws {

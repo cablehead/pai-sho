@@ -13,6 +13,7 @@
 		A60000000000000000000005 /* PaiShoUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000008 /* PaiShoUITests.swift */; };
 		A60000000000000000000007 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000D /* Assets.xcassets */; };
 		A60000000000000000000008 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000E /* PrivacyInfo.xcprivacy */; };
+		A60000000000000000000009 /* Acknowledgements.txt in Resources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000F /* Acknowledgements.txt */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -39,6 +40,7 @@
 		A1000000000000000000000A /* build-rust.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "build-rust.sh"; sourceTree = "<group>"; };
 		A1000000000000000000000D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A1000000000000000000000E /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		A1000000000000000000000F /* Acknowledgements.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = Acknowledgements.txt; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -82,6 +84,7 @@
 				A1000000000000000000000B /* Info-macOS.plist */,
 				A1000000000000000000000D /* Assets.xcassets */,
 				A1000000000000000000000E /* PrivacyInfo.xcprivacy */,
+				A1000000000000000000000F /* Acknowledgements.txt */,
 			);
 			path = PaiSho;
 			sourceTree = "<group>";
@@ -189,6 +192,7 @@
 			files = (
 				A60000000000000000000007 /* Assets.xcassets in Resources */,
 				A60000000000000000000008 /* PrivacyInfo.xcprivacy in Resources */,
+				A60000000000000000000009 /* Acknowledgements.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

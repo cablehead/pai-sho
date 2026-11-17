@@ -184,9 +184,7 @@ struct PeerList<Controls: View>: View {
             }
             Section {
             } footer: {
-                Text(appVersion)
-                    .frame(maxWidth: .infinity)
-                    .accessibilityIdentifier("version")
+                Credits()
             }
         }
         .overlay {

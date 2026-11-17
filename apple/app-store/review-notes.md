@@ -20,3 +20,12 @@ so we run a demo machine for review.
 Each invitation works once and expires after 5 minutes. Reload the page
 for a new one. The camera is used only to scan invitations, and local
 network access lets two devices on the same network connect directly.
+
+Pai Sho is open source, under the MIT licence:
+https://github.com/cablehead/pai-sho. It is built on iroh, the open-source
+peer-to-peer networking library made by number 0:
+https://github.com/n0-computer/iroh and https://n0.computer. When two
+devices can't reach each other directly, the encrypted connection goes
+through number 0's public relay servers. The app credits both under the
+peer list, with Acknowledgements listing every open-source library it
+includes and its licence.

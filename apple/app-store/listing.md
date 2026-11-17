@@ -44,7 +44,9 @@ Install pai-sho on a Mac or Linux machine with `brew install
 cablehead/tap/pai-sho` or `cargo install pai-sho`, then run `pai-sho invite
 --qr --expose 8080` to share port 8080 with your phone.
 
-Pai Sho is built on iroh, the open-source peer-to-peer networking library.
+Pai Sho is built on iroh, the open-source peer-to-peer networking library
+made by number 0 (n0.computer). Pai Sho is open source too, under the MIT
+licence: github.com/cablehead/pai-sho
 
 ## Keywords (100 max)
 
