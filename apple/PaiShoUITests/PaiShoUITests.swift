@@ -110,6 +110,7 @@ final class PaiShoUITests: XCTestCase {
         app.terminate()
         app = take(invite, as: "demo")
         XCTAssertTrue(app.buttons["port-\(port)"].waitForExistence(timeout: 60), "a fresh invitation never got through")
+        XCTAssertTrue(app.descendants(matching: .any)["peer-demo"].exists, "the fresh name didn't replace the old one")
         sleep(2)
         attach(app, "2-fresh")
 
