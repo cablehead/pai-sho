@@ -18,35 +18,33 @@ size is scaled from those.
 
 ## Promotional text (170 max)
 
-Open the web apps running on your own machines from your phone. No account,
-no public IP, no open ports: just scan an invitation.
+Open web pages served on your own machines from your iPhone or iPad. Peer to
+peer, with no account and no open ports.
 
 ## Description
 
-Pai Sho opens the services running on your own machines, such as a build
-dashboard, a dev server or a home server's admin page, right on your iPhone
-or iPad. It connects your devices to each other directly, wherever they are.
+Pai Sho opens web pages served on your own machines: a build dashboard, a
+dev server, a home server's admin page.
 
-Neither side needs an account, a public IP address or an open inbound port.
-The machine you want to reach runs pai-sho, the free command-line tool, and
-makes an invitation. Scan its QR code with Pai Sho, give the machine a name,
-and the ports it shares show up in the app. Tap one to open its page.
+The machine runs pai-sho, a command-line tool, and makes an invitation. Scan
+its QR code with the app and give the machine a name. The ports it shares
+are listed under that name. Tap one to open its page.
 
-- Peer to peer: your devices connect directly when they can, and through an
-  encrypting relay when they can't.
-- Private by design: a port is reachable only by the devices it is granted
-  to. A connection from any other device is refused.
-- End-to-end encrypted with QUIC and TLS 1.3. Nobody in between can read
-  your traffic, including us.
-- No account and no tracking. Pai Sho collects nothing.
+Neither side needs an account, a public IP, or an open inbound port. Devices
+connect directly when they can, and through a relay when they can't. Traffic
+is end-to-end encrypted with QUIC and TLS 1.3. A port is reachable only by
+the devices it's granted to.
 
-Install pai-sho on a Mac or Linux machine with `brew install
-cablehead/tap/pai-sho` or `cargo install pai-sho`, then run `pai-sho invite
---qr --expose 8080` to share port 8080 with your phone.
+Pai Sho has no accounts and collects no data.
 
-Pai Sho is built on iroh, the open-source peer-to-peer networking library
-made by number 0 (n0.computer). Pai Sho is open source too, under the MIT
-licence: github.com/cablehead/pai-sho
+To set up a Mac or Linux machine:
+
+    brew install cablehead/tap/pai-sho
+    pai-sho daemon (leave it running)
+    pai-sho invite --qr --expose 8080 (in another terminal)
+
+Pai Sho runs on iroh, from number 0 (n0.computer). Both are open source. Pai
+Sho's code is at github.com/cablehead/pai-sho, under the MIT licence.
 
 ## Keywords (100 max)
 

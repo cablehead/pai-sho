@@ -1,8 +1,8 @@
 Pai Sho is open source, under the MIT licence: https://github.com/cablehead/pai-sho
 
-It is built on iroh, the open-source peer-to-peer networking library made by number 0 (https://n0.computer): https://github.com/n0-computer/iroh
+It runs on iroh, from number 0 (https://n0.computer): https://github.com/n0-computer/iroh
 
-The app includes these 313 open-source Rust crates. Each one's licence follows its name.
+Below is each Rust crate in the app, with its licence.
 
 ========================================================================
 aead 0.5.2
@@ -2501,8 +2501,7 @@ DEALINGS IN THE SOFTWARE.
 block2 0.6.2
 Licence: MIT
 https://github.com/madsmtm/objc2
-No licence file ships with this crate. Its licence's
-standard text is under the same name in the other crates.
+This crate ships no licence file. Its repository has the licence.
 
 ========================================================================
 byteorder 1.5.0
@@ -4096,8 +4095,7 @@ https://github.com/ia0/data-encoding
 defmt 0.3.100
 Licence: MIT OR Apache-2.0
 https://github.com/knurling-rs/defmt
-No licence file ships with this crate. Its licence's
-standard text is under the same name in the other crates.
+This crate ships no licence file. Its repository has the licence.
 
 ========================================================================
 defmt 1.1.1
@@ -4347,8 +4345,7 @@ https://github.com/knurling-rs/defmt
 defmt-parser 1.0.0
 Licence: MIT OR Apache-2.0
 https://github.com/knurling-rs/defmt
-No licence file ships with this crate. Its licence's
-standard text is under the same name in the other crates.
+This crate ships no licence file. Its repository has the licence.
 
 ========================================================================
 der 0.8.0
@@ -4692,8 +4689,7 @@ DEALINGS IN THE SOFTWARE.
 dispatch2 0.3.1
 Licence: Zlib OR Apache-2.0 OR MIT
 https://github.com/madsmtm/objc2
-No licence file ships with this crate. Its licence's
-standard text is under the same name in the other crates.
+This crate ships no licence file. Its repository has the licence.
 
 ========================================================================
 displaydoc 0.2.5
@@ -5080,8 +5076,7 @@ DEALINGS IN THE SOFTWARE.
 enum-assoc 1.3.0
 Licence: MIT OR Apache-2.0
 https://github.com/Eolu/enum-assoc
-No licence file ships with this crate. Its licence's
-standard text is under the same name in the other crates.
+This crate ships no licence file. Its repository has the licence.
 
 ========================================================================
 equivalent 1.0.2
@@ -7666,15 +7661,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 iroh-base 1.0.3
 Licence: MIT OR Apache-2.0
 https://github.com/n0-computer/iroh
-No licence file ships with this crate. Its licence's
-standard text is under the same name in the other crates.
+This crate ships no licence file. Its repository has the licence.
 
 ========================================================================
 iroh-dns 1.0.3
 Licence: MIT OR Apache-2.0
 https://github.com/n0-computer/iroh
-No licence file ships with this crate. Its licence's
-standard text is under the same name in the other crates.
+This crate ships no licence file. Its repository has the licence.
 
 ========================================================================
 iroh-metrics 1.0.1
@@ -7915,8 +7908,7 @@ DEALINGS IN THE SOFTWARE.
 iroh-metrics-derive 1.0.1
 Licence: MIT OR Apache-2.0
 https://github.com/n0-computer/iroh-metrics
-No licence file ships with this crate. Its licence's
-standard text is under the same name in the other crates.
+This crate ships no licence file. Its repository has the licence.
 
 ========================================================================
 iroh-relay 1.0.3
@@ -8524,8 +8516,7 @@ https://github.com/n0-computer/n0-error
 n0-error-macros 1.0.0
 Licence: MIT OR Apache-2.0
 https://github.com/n0-computer/n0-error
-No licence file ships with this crate. Its licence's
-standard text is under the same name in the other crates.
+This crate ships no licence file. Its repository has the licence.
 
 ========================================================================
 n0-future 0.3.2
@@ -8803,8 +8794,7 @@ SOFTWARE.
 netwatch 0.19.1
 Licence: MIT OR Apache-2.0
 https://github.com/n0-computer/net-tools
-No licence file ships with this crate. Its licence's
-standard text is under the same name in the other crates.
+This crate ships no licence file. Its repository has the licence.
 
 ========================================================================
 noq 1.1.1
@@ -9363,36 +9353,31 @@ https://github.com/illicitonion/num_enum
 objc2 0.6.4
 Licence: MIT
 https://github.com/madsmtm/objc2
-No licence file ships with this crate. Its licence's
-standard text is under the same name in the other crates.
+This crate ships no licence file. Its repository has the licence.
 
 ========================================================================
 objc2-core-foundation 0.3.2
 Licence: Zlib OR Apache-2.0 OR MIT
 https://github.com/madsmtm/objc2
-No licence file ships with this crate. Its licence's
-standard text is under the same name in the other crates.
+This crate ships no licence file. Its repository has the licence.
 
 ========================================================================
 objc2-encode 4.1.0
 Licence: MIT
 https://github.com/madsmtm/objc2
-No licence file ships with this crate. Its licence's
-standard text is under the same name in the other crates.
+This crate ships no licence file. Its repository has the licence.
 
 ========================================================================
 objc2-security 0.3.2
 Licence: Zlib OR Apache-2.0 OR MIT
 https://github.com/madsmtm/objc2
-No licence file ships with this crate. Its licence's
-standard text is under the same name in the other crates.
+This crate ships no licence file. Its repository has the licence.
 
 ========================================================================
 objc2-system-configuration 0.3.2
 Licence: Zlib OR Apache-2.0 OR MIT
 https://github.com/madsmtm/objc2
-No licence file ships with this crate. Its licence's
-standard text is under the same name in the other crates.
+This crate ships no licence file. Its repository has the licence.
 
 ========================================================================
 once_cell 1.21.3
@@ -10064,8 +10049,7 @@ https://github.com/taiki-e/portable-atomic
 portmapper 0.19.1
 Licence: MIT OR Apache-2.0
 https://github.com/n0-computer/net-tools
-No licence file ships with this crate. Its licence's
-standard text is under the same name in the other crates.
+This crate ships no licence file. Its repository has the licence.
 
 ========================================================================
 postcard 1.1.3
@@ -14038,8 +14022,7 @@ DEALINGS IN THE SOFTWARE.
 tokio-smoltcp 0.6.0
 Licence: MIT OR Apache-2.0
 https://github.com/spacemeowx2/tokio-smoltcp.git
-No licence file ships with this crate. Its licence's
-standard text is under the same name in the other crates.
+This crate ships no licence file. Its repository has the licence.
 
 ========================================================================
 tokio-stream 0.1.18

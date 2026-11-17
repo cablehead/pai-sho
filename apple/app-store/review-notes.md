@@ -5,27 +5,27 @@ sign-in is needed: Pai Sho has no accounts.
 
 ---
 
-Pai Sho connects a person's own devices peer to peer, and opens the web
-pages a connected machine shares. It needs a second machine to connect to,
-so we run a demo machine for review.
+Pai Sho connects a person's own devices peer to peer and opens web pages
+they serve. It needs a second machine to connect to, so we run one for
+review.
 
 1. On a computer, open https://pai-sho.ndyg.cross.stream. It shows a QR
-   code with a fresh invitation to the demo machine.
-2. In Pai Sho on the iPhone or iPad, tap the scan button at the top and
-   scan the code. Allow the camera when asked.
-3. Enter any name, such as "demo", and tap Accept.
-4. The demo machine appears with port 47831. Once it shows as online, tap
-   the port to open its page, which shows 127.0.0.1:47831.
+   code: an invitation to the demo machine.
+2. In Pai Sho, tap the scan button at the top right and scan the code. Allow
+   the camera when asked.
+3. Type any name, such as "demo", and tap Accept.
+4. The demo machine appears with port 47831. When it shows online, tap the
+   port. Its page shows 127.0.0.1:47831.
 
-Each invitation works once and expires after 5 minutes. Reload the page
-for a new one. The camera is used only to scan invitations, and local
-network access lets two devices on the same network connect directly.
+An invitation works once, for 5 minutes. Reload the page for a new one. The
+camera is only used to scan invitations. Local network access lets two
+devices on the same network connect directly.
 
 Pai Sho is open source, under the MIT licence:
-https://github.com/cablehead/pai-sho. It is built on iroh, the open-source
-peer-to-peer networking library made by number 0:
-https://github.com/n0-computer/iroh and https://n0.computer. When two
-devices can't reach each other directly, the encrypted connection goes
-through number 0's public relay servers. The app credits both under the
-peer list, with Acknowledgements listing every open-source library it
-includes and its licence.
+https://github.com/cablehead/pai-sho
+
+It runs on iroh, an open-source peer-to-peer library from number 0:
+https://github.com/n0-computer/iroh. When two devices can't connect
+directly, their encrypted traffic goes through number 0's public relays. The
+credits are at the bottom of the app's peer list. Acknowledgements, there,
+lists each library in the app and its licence.

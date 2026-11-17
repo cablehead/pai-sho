@@ -41,9 +41,9 @@ crates = sorted((packages[p] for p in seen if p != root), key=lambda p: (p["name
 # The intro is shown as one paragraph per line, so it isn't wrapped here.
 out = ["Pai Sho is open source, under the MIT licence: https://github.com/cablehead/pai-sho",
        "",
-       "It is built on iroh, the open-source peer-to-peer networking library made by number 0 (https://n0.computer): https://github.com/n0-computer/iroh",
+       "It runs on iroh, from number 0 (https://n0.computer): https://github.com/n0-computer/iroh",
        "",
-       f"The app includes these {len(crates)} open-source Rust crates. Each one's licence follows its name.",
+       "Below is each Rust crate in the app, with its licence.",
        ""]
 missing = []
 shown = {}  # licence text -> the crate whose entry shows it in full
@@ -65,8 +65,7 @@ for p in crates:
         out.append(f"--- {name}")
         out.append(text)
     if not files:
-        out.append("No licence file ships with this crate. Its licence's")
-        out.append("standard text is under the same name in the other crates.")
+        out.append("This crate ships no licence file. Its repository has the licence.")
     out.append("")
 open(OUT, "w").write("\n".join(out) + "\n")
 print(f"{len(crates)} crates, {os.path.getsize(OUT)} bytes, no licence file: {', '.join(missing) or 'none'}", file=sys.stderr)
