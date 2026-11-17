@@ -677,6 +677,42 @@ async fn restart(d: TestDaemon, peers: &[&TestDaemon], at_localhost: bool) -> Te
     }
 }
 
+/// An `expose` outlives a restart: the grant is saved next to the key, and
+/// the restarted daemon offers the port to its grantee again. `b` grants and
+/// restarts, since it's the side that calls the other back.
+#[tokio::test]
+async fn a_grant_survives_a_restart() {
+    let (a, b) = pair(IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
+    enroll(&a, &b, "b").await;
+    let (a_key, b_key) = (a.key(), b.key());
+    until(20, || sees_online(&b, &a_key, "a")).await;
+    b.request(Request::Expose {
+        port: 4321,
+        to: vec![a_key.clone()],
+        all: false,
+    })
+    .await;
+
+    let b = restart(b, &[&a], false).await;
+
+    let Response::List(list) = b.request(Request::List).await else {
+        panic!("list failed");
+    };
+    assert!(
+        list.grants.iter().any(|g| g.port == 4321 && g.to == a_key),
+        "the grant was lost: {:?}",
+        list.grants
+    );
+    until(20, || async {
+        let Response::List(list) = a.request(Request::List).await else {
+            return None;
+        };
+        let p = list.peers.iter().find(|p| p.key == b_key)?;
+        p.they_expose.contains(&4321).then_some(())
+    })
+    .await;
+}
+
 /// An iPhone app restarts on every update. The side that took up the
 /// invitation must still know the peer afterwards, and call it again.
 #[tokio::test]

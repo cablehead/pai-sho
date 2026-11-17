@@ -8,6 +8,7 @@ pub mod core;
 pub mod daemon;
 pub mod enroll;
 pub mod ffi;
+pub mod grant_store;
 pub mod json_file;
 pub mod launchd;
 #[cfg(test)]

@@ -150,6 +150,8 @@ pub struct PeerManager {
     next_conn_id: AtomicU64,
     /// Peers pinned at enrollment, persisted across restarts
     pins: Pins,
+    /// `expose` grants, persisted across restarts
+    grants: crate::grant_store::GrantStore,
     /// Projected surfaces, persisted across restarts
     surfaces: SurfaceStore,
     /// The local number each peer port got at 127.0.0.1, persisted across
@@ -180,6 +182,7 @@ impl PeerManager {
         host: IpAddr,
         session: Arc<std::sync::Mutex<Session>>,
         pins: Pins,
+        grants: crate::grant_store::GrantStore,
         surfaces: SurfaceStore,
         ports: PortStore,
         netstack: Option<NetStack>,
@@ -193,6 +196,7 @@ impl PeerManager {
             session,
             next_conn_id: AtomicU64::new(1),
             pins,
+            grants,
             surfaces,
             ports,
             netstack,
@@ -997,10 +1001,14 @@ impl PeerManager {
 
         let actions = self.session.lock().unwrap().evict(endpoint_id);
         for action in actions {
-            if let Action::DropPin { key } = action {
-                if let Err(e) = self.pins.remove(&key.to_string()) {
-                    warn!("failed to remove pin for {}: {}", key, e);
+            match action {
+                Action::DropPin { key } => {
+                    if let Err(e) = self.pins.remove(&key.to_string()) {
+                        warn!("failed to remove pin for {}: {}", key, e);
+                    }
                 }
+                Action::PersistGrants => self.save_grants(),
+                _ => {}
             }
         }
         if let Err(e) = self.surfaces.remove(&endpoint_id.to_string()) {
@@ -1104,6 +1112,7 @@ impl PeerManager {
                         error!("failed to remove pin for {}: {}", key, e);
                     }
                 }
+                Action::PersistGrants => self.save_grants(),
                 Action::Admit { .. } | Action::Refuse { .. } => {}
                 Action::ServeTunnel { .. } | Action::RejectTunnel { .. } => {}
             }
@@ -1224,6 +1233,14 @@ impl PeerManager {
     }
 
     /// Re-announce grants to every connected peer (each gets its own view)
+    /// Write every grant to disk, as the session has them now.
+    pub fn save_grants(&self) {
+        let grants = self.session.lock().unwrap().all_grants();
+        if let Err(e) = self.grants.save(&grants) {
+            error!("failed to save grants: {}", e);
+        }
+    }
+
     pub async fn broadcast_grants(&self) {
         for entry in self.peers.iter() {
             self.announce_to(entry.value()).await;

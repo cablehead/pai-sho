@@ -151,9 +151,15 @@ impl Daemon {
         let key_path = state_prefix;
         let session = Arc::new(std::sync::Mutex::new(Session::new()));
 
-        // Pins, surfaces and ports live next to the key: <key>.peers.json,
-        // <key>.surfaces.json, <key>.ports.json
+        // Pins, grants, surfaces and ports live next to the key:
+        // <key>.peers.json, <key>.grants.json, <key>.surfaces.json,
+        // <key>.ports.json
         let pins = Pins::new(PathBuf::from(format!("{}.peers.json", key_path.display())));
+        let grants = crate::grant_store::GrantStore::new(PathBuf::from(format!(
+            "{}.grants.json",
+            key_path.display()
+        )));
+        session.lock().unwrap().restore_grants(grants.load()?);
         let surfaces = SurfaceStore::new(PathBuf::from(format!(
             "{}.surfaces.json",
             key_path.display()
@@ -167,6 +173,7 @@ impl Daemon {
                 host,
                 session.clone(),
                 pins,
+                grants,
                 surfaces,
                 ports,
                 netstack,
@@ -277,6 +284,7 @@ impl Daemon {
     /// Grant `port` to each peer in `to` and re-announce
     pub async fn expose(&self, port: u16, to: &[EndpointId]) -> Result<()> {
         self.session.lock().unwrap().expose(port, to);
+        self.peers.save_grants();
         self.peers.broadcast_grants().await;
         info!("exposed port {} to {} peer(s)", port, to.len());
         Ok(())
@@ -285,6 +293,7 @@ impl Daemon {
     /// Revoke grants for `port` (all of them, or just `to`) and re-announce
     pub async fn unexpose(&self, port: u16, to: Option<EndpointId>) -> Result<()> {
         self.session.lock().unwrap().unexpose(port, to);
+        self.peers.save_grants();
         self.peers.broadcast_grants().await;
         info!("unexposed port {}", port);
         Ok(())

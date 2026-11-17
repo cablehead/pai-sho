@@ -111,6 +111,8 @@ pub enum Action {
     },
     /// Drop this pin from disk.
     DropPin { key: EndpointId },
+    /// The grants changed: write them all to disk, so they survive a restart.
+    PersistGrants,
 }
 
 /// An admitted peer, as far as admission and access are concerned. Connection
@@ -214,6 +216,9 @@ impl Session {
                             label: claimed.name,
                         },
                     ];
+                    if !claimed.ports.is_empty() {
+                        actions.push(Action::PersistGrants);
+                    }
                     if !early.is_empty() {
                         actions.push(Action::ApplyPorts {
                             peer: remote,
@@ -258,7 +263,7 @@ impl Session {
             return Vec::new();
         }
         self.grants.revoke_grantee(peer);
-        vec![Action::DropPin { key: *peer }]
+        vec![Action::DropPin { key: *peer }, Action::PersistGrants]
     }
 
     // ------------------------------------------------------------------- access
@@ -290,13 +295,17 @@ impl Session {
         for grantee in to {
             self.grants.add(port, *grantee);
         }
-        self.announce_all()
+        let mut actions = self.announce_all();
+        actions.push(Action::PersistGrants);
+        actions
     }
 
     /// Revoke grants for `port`: one grantee's, or every one of them.
     pub fn unexpose(&mut self, port: u16, to: Option<EndpointId>) -> Vec<Action> {
         self.grants.remove(port, to);
-        self.announce_all()
+        let mut actions = self.announce_all();
+        actions.push(Action::PersistGrants);
+        actions
     }
 
     fn announce_all(&self) -> Vec<Action> {
@@ -370,6 +379,14 @@ impl Session {
 
     pub fn all_grants(&self) -> Vec<(u16, EndpointId)> {
         self.grants.all()
+    }
+
+    /// Grants saved before a restart, back in force. Each names its grantee by
+    /// key, so one for a peer since forgotten admits no one.
+    pub fn restore_grants(&mut self, grants: impl IntoIterator<Item = (u16, EndpointId)>) {
+        for (port, grantee) in grants {
+            self.grants.add(port, grantee);
+        }
     }
 }
 
@@ -516,10 +533,13 @@ mod tests {
         s.expose(4000, &[a]);
         assert_eq!(
             s.unexpose(4000, None),
-            vec![Action::Announce {
-                peer: a,
-                ports: vec![]
-            }]
+            vec![
+                Action::Announce {
+                    peer: a,
+                    ports: vec![]
+                },
+                Action::PersistGrants
+            ]
         );
     }
 
