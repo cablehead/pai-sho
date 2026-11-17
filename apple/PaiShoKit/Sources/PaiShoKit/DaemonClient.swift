@@ -236,6 +236,15 @@ public struct DaemonClient: Sendable {
         try Self.ok(fromReply: try await exchange(line))
     }
 
+    /// Forget a peer: close it, unbind its ports and revoke its grants. `peer`
+    /// is its key.
+    public func forget(peer: String) async throws {
+        let request = try JSONSerialization.data(withJSONObject: ["Forget": ["peer": peer]])
+        guard var line = String(data: request, encoding: .utf8) else { throw DaemonError.badResponse }
+        line.append("\n")
+        try Self.ok(fromReply: try await exchange(line))
+    }
+
     /// A new one-time invitation, valid 5 minutes. `name` is what to call the
     /// peer that takes it up.
     public func invite(name: String?) async throws -> String {

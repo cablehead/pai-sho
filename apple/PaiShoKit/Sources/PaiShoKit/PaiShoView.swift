@@ -161,6 +161,8 @@ struct PeerList<Controls: View>: View {
     let store: PeerStore
     @Binding var selection: PortID?
     let controls: Controls
+    @State private var forgetting: Peer?
+    @State private var forgetFailed: String?
 
     var body: some View {
         List(selection: $selection) {
@@ -170,6 +172,8 @@ struct PeerList<Controls: View>: View {
                     if peer.ports.isEmpty {
                         Text("No ports")
                             .foregroundStyle(.tertiary)
+                            .contextMenu { forgetButton(peer) }
+                            .swipeActions { forgetButton(peer) }
                     }
                     ForEach(peer.ports, id: \.self) { port in
                         let id = PortID(peer: peer.key, port: port)
@@ -177,15 +181,42 @@ struct PeerList<Controls: View>: View {
                             PortRow(port: port, bound: peer.address(port: port) != nil, title: store.pageTitles[id])
                         }
                         .accessibilityIdentifier("port-\(port)")
+                        .contextMenu { forgetButton(peer) }
+                        .swipeActions { forgetButton(peer) }
                     }
                 } header: {
                     PeerHeader(title: store.title(for: peer), status: store.status(of: peer))
+                        .contextMenu { forgetButton(peer) }
+                        .accessibilityIdentifier("peer-\(store.title(for: peer))")
                 }
             }
             Section {
             } footer: {
                 Credits()
             }
+        }
+        .confirmationDialog(
+            "Forget \(forgetting.map { store.title(for: $0) } ?? "")?",
+            isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } }),
+            titleVisibility: .visible,
+            presenting: forgetting
+        ) { peer in
+            Button("Forget", role: .destructive) {
+                Task {
+                    do {
+                        try await store.forget(peer)
+                    } catch {
+                        forgetFailed = error.localizedDescription
+                    }
+                }
+            }
+        } message: { _ in
+            Text("Its ports close here. To connect again, take up a new invitation from it.")
+        }
+        .alert("Couldn't forget it", isPresented: Binding(get: { forgetFailed != nil }, set: { if !$0 { forgetFailed = nil } })) {
+            Button("OK") {}
+        } message: {
+            Text(forgetFailed ?? "")
         }
         .overlay {
             if store.peers.isEmpty {
@@ -208,6 +239,17 @@ struct PeerList<Controls: View>: View {
                     }
                 }
             }
+        }
+    }
+}
+
+extension PeerList {
+    /// Forget a peer, after asking: on a long press, or a swipe on its ports.
+    func forgetButton(_ peer: Peer) -> some View {
+        Button(role: .destructive) {
+            forgetting = peer
+        } label: {
+            Label("Forget \(store.title(for: peer))", systemImage: "trash")
         }
     }
 }

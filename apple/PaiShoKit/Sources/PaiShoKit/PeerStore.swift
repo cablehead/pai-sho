@@ -126,6 +126,16 @@ public final class PeerStore {
         await refresh()
     }
 
+    /// Forget a peer, here and in pai-sho. To reach it again takes a new
+    /// invitation.
+    public func forget(_ peer: Peer) async throws {
+        try await client.forget(peer: peer.key)
+        let known = Self.known(in: defaults).filter { $0.key != peer.key }
+        rememberKnown(known)
+        peers.removeAll { $0.key == peer.key }
+        await refresh()
+    }
+
     public func peer(_ key: String) -> Peer? {
         peers.first { $0.key == key }
     }

@@ -76,6 +76,56 @@ final class PaiShoUITests: XCTestCase {
         attach(app, "3-page")
     }
 
+    /// An invitation that expired leaves its peer stuck connecting. A fresh
+    /// one from the same machine still goes through, and a long press on a
+    /// peer forgets it.
+    func testExpiredInvitation() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let invite = env["PAI_SHO_INVITE"], let port = env["PAI_SHO_PORT"],
+              let key = invite.split(separator: ".").first
+        else { throw XCTSkip("set TEST_RUNNER_PAI_SHO_INVITE and _PORT") }
+        let stale = "\(key).\(String(repeating: "00", count: 16))"
+
+        func take(_ invitation: String, as peer: String) -> XCUIApplication {
+            let app = XCUIApplication()
+            app.launchArguments = ["-invite", invitation]
+            app.launch()
+            let name = app.textFields["name"]
+            XCTAssertTrue(name.waitForExistence(timeout: 10))
+            name.tap()
+            sleep(1)
+            if app.buttons["Continue"].exists { app.buttons["Continue"].tap() }
+            name.typeText(peer)
+            app.buttons["Accept"].tap()
+            return app
+        }
+
+        var app = take(stale, as: "old")
+        let old = app.descendants(matching: .any)["peer-old"].firstMatch
+        XCTAssertTrue(old.waitForExistence(timeout: 10))
+        sleep(4)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'connecting'")).firstMatch.exists)
+        attach(app, "1-stuck")
+
+        app.terminate()
+        app = take(invite, as: "demo")
+        XCTAssertTrue(app.buttons["port-\(port)"].waitForExistence(timeout: 60), "a fresh invitation never got through")
+        sleep(2)
+        attach(app, "2-fresh")
+
+        app.buttons["port-\(port)"].press(forDuration: 1.5)
+        let forget = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Forget '")).firstMatch
+        XCTAssertTrue(forget.waitForExistence(timeout: 5))
+        attach(app, "3-menu")
+        forget.tap()
+        let confirm = app.buttons["Forget"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        attach(app, "4-confirm")
+        confirm.tap()
+        XCTAssertTrue(app.staticTexts["No peers"].waitForExistence(timeout: 10))
+        attach(app, "5-gone")
+    }
+
     /// The credits under the peer list, and the licences they open.
     func testAcknowledgements() throws {
         let env = ProcessInfo.processInfo.environment
