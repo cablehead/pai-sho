@@ -32,6 +32,11 @@ pub enum Request {
     Forget {
         peer: String,
     },
+    /// Call a peer, by key or its current name, by a new name
+    Rename {
+        peer: String,
+        name: String,
+    },
     /// Grant `port` to `to`, or to every peer known right now when `all`
     Expose {
         port: u16,

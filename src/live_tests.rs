@@ -510,6 +510,28 @@ async fn an_unnamed_peer_still_gets_a_name() {
     assert!(b.daemon.peers().resolve_name(&short).await.is_some());
 }
 
+/// `rename` gives a known peer a new name: `list` and the resolver go by it.
+#[tokio::test]
+async fn a_peer_can_be_renamed() {
+    let (a, b) = pair(IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
+    enroll(&a, &b, "b").await;
+    let a_key = a.key();
+    until(20, || sees_online(&b, &a_key, "a")).await;
+
+    match b
+        .request(Request::Rename {
+            peer: "a".into(),
+            name: "laptop".into(),
+        })
+        .await
+    {
+        Response::Ok => {}
+        other => panic!("rename failed: {:?}", other),
+    }
+    until(5, || sees_online(&b, &a_key, "laptop")).await;
+    assert!(b.daemon.peers().resolve_name("a").await.is_none());
+}
+
 /// `project --as` renames the peer, not only its surface: `list`, `--to` and
 /// the resolver all answer to the new name, and the old one is gone.
 #[tokio::test]

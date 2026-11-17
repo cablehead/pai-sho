@@ -323,6 +323,10 @@ impl Daemon {
                 Ok(()) => Response::Ok,
                 Err(e) => Response::Error(e.to_string()),
             },
+            Request::Rename { peer, name } => match self.peers.rename_peer(&peer, name).await {
+                Ok(()) => Response::Ok,
+                Err(e) => Response::Error(e.to_string()),
+            },
             Request::Expose { port, to, all } => {
                 // A grant always names its grantees. --all names every peer
                 // known at this moment; it is not a standing rule.

@@ -93,6 +93,14 @@ pub enum Command {
         peer: String,
     },
 
+    /// Call a peer by a new name, in `list`, `--to` and `<name>.pai-sho`
+    Rename {
+        /// Peer to rename (a key or a name)
+        peer: String,
+        /// Its new name
+        name: String,
+    },
+
     /// Grant a local port to specific peers. Nothing is reachable without a grant.
     #[command(group = ArgGroup::new("grantees").required(true).args(["to", "all"]))]
     Expose {

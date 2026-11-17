@@ -15,6 +15,7 @@ pub async fn send_command(socket_path: &Path, command: Command) -> Result<()> {
         } => Request::Invite { key, name, expose },
         Command::Accept { handle, name } => Request::Accept { handle, name },
         Command::Forget { peer } => Request::Forget { peer },
+        Command::Rename { peer, name } => Request::Rename { peer, name },
         Command::Expose { port, to, all } => Request::Expose { port, to, all },
         Command::Unexpose { port, to } => Request::Unexpose { port, to },
         Command::List => Request::List,

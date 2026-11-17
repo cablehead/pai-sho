@@ -232,6 +232,28 @@ impl PeerManager {
         self.apply(peer, actions).await;
     }
 
+    /// Call a peer, by key or its current name, by a new name. A projected
+    /// peer projects again at the same address, so its surface answers to the
+    /// new name too.
+    pub async fn rename_peer(self: &Arc<Self>, peer_ref: &str, name: String) -> Result<()> {
+        let id = self
+            .resolve_peer(peer_ref)
+            .ok_or_else(|| anyhow!("no such peer: {}", peer_ref))?;
+        let peer = self
+            .peers
+            .get(&id)
+            .ok_or_else(|| anyhow!("no such peer: {}", peer_ref))?
+            .clone();
+        let surface = peer.surface.read().await.clone();
+        match surface {
+            Some(s) => self.project(&id.to_string(), Some(s.ip), Some(name)).await,
+            None => {
+                self.rename(&peer, name).await;
+                Ok(())
+            }
+        }
+    }
+
     /// Take up an invitation, or reach a peer known by key. We dial this peer
     /// and keep dialing it. A code, when there is one, is presented on connect
     /// and on every reconnect (the peer ignores it once we are known).
@@ -250,17 +272,9 @@ impl PeerManager {
                 *peer.enroll_token.lock().unwrap() = Some(code);
                 peer.redial.notify_one();
             }
-            // The name given this time wins. A projected peer projects again
-            // at the same address, so its surface answers to the new name too.
+            // The name given this time wins.
             if let Some(name) = name.filter(|n| peer.label().as_ref() != Some(n)) {
-                let surface = peer.surface.read().await.clone();
-                match surface {
-                    Some(s) => {
-                        self.project(&endpoint_id.to_string(), Some(s.ip), Some(name))
-                            .await?
-                    }
-                    None => self.rename(&peer, name).await,
-                }
+                self.rename_peer(&endpoint_id.to_string(), name).await?;
             }
             return Ok(());
         }
