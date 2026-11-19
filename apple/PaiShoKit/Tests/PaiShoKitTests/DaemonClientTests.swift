@@ -271,3 +271,51 @@ import Testing
         #expect(WebView.Coordinator.failedURL(NSError(domain: NSURLErrorDomain, code: -1)) == nil)
     }
 }
+
+@Suite struct AcceptReply {
+    @Test func joinedNamesThePorts() throws {
+        let reply = #"{"Accepted":{"Joined":{"name":"demo","ports":[47831]}}}"#
+        #expect(try DaemonClient.outcome(fromAcceptReply: Data(reply.utf8)) == .joined(name: "demo", ports: [47831]))
+    }
+
+    @Test func aDeadCodeIsRefused() throws {
+        let reply = #"{"Accepted":{"Refused":{"reason":"not authorized"}}}"#
+        #expect(try DaemonClient.outcome(fromAcceptReply: Data(reply.utf8)) == .refused(reason: "not authorized"))
+    }
+
+    @Test func noAnswerInTimeIsPending() throws {
+        let reply = #"{"Accepted":{"Pending":{"turned_away":null}}}"#
+        #expect(try DaemonClient.outcome(fromAcceptReply: Data(reply.utf8)) == .pending(turnedAway: nil))
+    }
+
+    @Test func anOlderPaiShoSaysOnlyOk() throws {
+        #expect(try DaemonClient.outcome(fromAcceptReply: Data(#""Ok""#.utf8)) == .sent)
+    }
+
+    @Test func anErrorIsStillAnError() {
+        let reply = #"{"Error":"invalid key"}"#
+        #expect(throws: DaemonError.refused("invalid key")) {
+            try DaemonClient.outcome(fromAcceptReply: Data(reply.utf8))
+        }
+    }
+}
+
+@Suite struct RefusedReply {
+    @Test func theKeysTurnedAwayAreListed() throws {
+        let reply = """
+        {"List":{"me":"m","peers":[],"i_expose":[],"grants":[],\
+        "refused":[{"key":"3fa2c1d0abcdef","reason":"not authorized","count":4,"last":1795020000}]}}
+        """
+        let refused = try DaemonClient.refused(fromListReply: Data(reply.utf8))
+        let first = try #require(refused.first)
+        #expect(first.key == "3fa2c1d0abcdef")
+        #expect(first.count == 4)
+        #expect(first.why == "expired or used invitation")
+        #expect(first.last == Date(timeIntervalSince1970: 1795020000))
+    }
+
+    @Test func anOlderPaiShoListsNone() throws {
+        let reply = #"{"List":{"me":"m","peers":[],"i_expose":[],"grants":[]}}"#
+        #expect(try DaemonClient.refused(fromListReply: Data(reply.utf8)).isEmpty)
+    }
+}
