@@ -246,6 +246,26 @@ impl Session {
         }
     }
 
+    /// A peer already admitted presented a code, say a returning device that
+    /// took a fresh invitation. A live code grants its ports to that peer and
+    /// is used up; the peer keeps its name and how it was admitted. A dead or
+    /// unknown code changes nothing: the peer is known, so it is not refused.
+    pub fn on_admitted_enroll(&mut self, peer: EndpointId, token: &str) -> Vec<Action> {
+        if !self.peers.contains_key(&peer) {
+            return Vec::new();
+        }
+        let Some(claimed) = self.tokens.claim(token) else {
+            return Vec::new();
+        };
+        if claimed.ports.is_empty() {
+            return Vec::new();
+        }
+        for port in &claimed.ports {
+            self.grants.add(*port, peer);
+        }
+        vec![Action::PersistGrants, self.announce(peer)]
+    }
+
     /// The enrollment window elapsed with no valid claim.
     pub fn on_enroll_timeout(&mut self, conn: ConnId) -> Vec<Action> {
         if self.pending.remove(&conn).is_none() {
@@ -746,6 +766,63 @@ mod tests {
         let mut s = Session::new();
         s.admit_known(key(1), None, Admission::Key);
         assert_eq!(s.admission_of(&key(1)), Some(Admission::Key));
+    }
+
+    // -- a known peer taking up a fresh invitation ---------------------------
+
+    #[test]
+    fn a_known_peer_with_a_live_code_gets_its_ports() {
+        let a = key(1);
+        let mut s = session_with(a);
+        let token = s.mint_token(Some("other".into()), vec![47831]);
+        assert_eq!(
+            s.on_admitted_enroll(a, &token),
+            vec![
+                Action::PersistGrants,
+                Action::Announce {
+                    peer: a,
+                    ports: vec![47831]
+                },
+            ]
+        );
+        assert_eq!(s.on_tunnel(&a, 47831), Action::ServeTunnel { port: 47831 });
+        // It keeps its name and how it was admitted.
+        assert_eq!(s.label_of(&a), Some("peer".into()));
+        assert_eq!(s.admission_of(&a), Some(Admission::Added));
+    }
+
+    #[test]
+    fn the_code_is_used_up() {
+        let (a, b) = (key(1), key(2));
+        let mut s = session_with(a);
+        s.admit_known(b, None, Admission::Added);
+        let token = s.mint_token(None, vec![47831]);
+        s.on_admitted_enroll(a, &token);
+        assert!(s.on_admitted_enroll(b, &token).is_empty());
+        assert_eq!(
+            s.on_tunnel(&b, 47831),
+            Action::RejectTunnel {
+                reason: Refusal::NotGranted
+            }
+        );
+    }
+
+    #[test]
+    fn a_known_peer_with_a_dead_code_changes_nothing() {
+        let a = key(1);
+        let mut s = session_with(a);
+        assert!(s.on_admitted_enroll(a, "nope").is_empty());
+        assert!(s.on_admitted_enroll(a, "").is_empty());
+        assert_eq!(s.admission_of(&a), Some(Admission::Added));
+        assert!(s.all_grants().is_empty());
+    }
+
+    #[test]
+    fn an_unknown_peer_cannot_claim_through_the_admitted_path() {
+        let mut s = Session::new();
+        let token = s.mint_token(None, vec![47831]);
+        assert!(s.on_admitted_enroll(key(9), &token).is_empty());
+        assert!(s.all_grants().is_empty());
     }
 
     // -- eviction ----------------------------------------------------------
