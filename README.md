@@ -176,6 +176,18 @@ Without `--tun`, peers are bound at loopback addresses (`127.0.1.x`) and you
 serve the resolver yourself with `--resolver <addr>`. Names still resolve, to
 those addresses.
 
+### Windows
+
+Windows 10 and later run the daemon and CLI on loopback, as Linux does without
+`--tun`: `127.0.0.0/8` is already loopback, so peers bind at `127.0.1.x` with no
+setup. `--tun` is not available, and neither are the `daemon install` service
+commands or `--socket-owner` and `--socket-mode`. The control socket is a Unix
+socket at `%TEMP%\pai-sho.sock`, and the key is `%LOCALAPPDATA%\pai-sho\key`.
+
+```sh
+pai-sho daemon
+```
+
 ## Usage
 
 ```
