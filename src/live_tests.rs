@@ -591,6 +591,107 @@ async fn a_dead_code_is_refused_and_nothing_is_kept() {
     );
 }
 
+/// A device that forgot the inviter and takes up the invitation it used
+/// before is refused, though the inviter still knew its key: a used code is
+/// stale. The inviter forgets it, so only a fresh invitation brings it back.
+#[tokio::test]
+async fn a_used_invitation_taken_up_again_is_refused() {
+    let (a, b) = pair(IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
+    let (a_key, b_key) = (a.key(), b.key());
+    let invite = match a
+        .request(Request::Invite {
+            key: None,
+            name: Some("b".to_string()),
+            expose: vec![],
+        })
+        .await
+    {
+        Response::Invite(i) => i,
+        other => panic!("expected an invitation, got {:?}", other),
+    };
+    let take_up = || {
+        b.request(Request::Accept {
+            wait: true,
+            handle: invite.clone(),
+            name: Some("a".to_string()),
+        })
+    };
+    match take_up().await {
+        Response::Accepted(Accepted::Joined { .. }) => {}
+        other => panic!("expected joined, got {:?}", other),
+    }
+    until(20, || sees_online(&a, &b_key, "b")).await;
+
+    b.request(Request::Forget {
+        peer: a_key.clone(),
+    })
+    .await;
+    match take_up().await {
+        Response::Accepted(Accepted::Refused { reason }) => {
+            assert_eq!(reason, "not authorized")
+        }
+        other => panic!("expected refused, got {:?}", other),
+    }
+    assert!(b.daemon.peers().list().await.is_empty());
+    let Response::List(list) = a.request(Request::List).await else {
+        panic!("list failed");
+    };
+    assert!(
+        !list.peers.iter().any(|p| p.key == b_key),
+        "a still knows b: {:?}",
+        list.peers
+    );
+    assert!(
+        list.refused.iter().any(|r| r.key == b_key),
+        "{:?}",
+        list.refused
+    );
+}
+
+/// Once let in, a device no longer presents its code, so a dropped link comes
+/// back as before and the inviter keeps it.
+#[tokio::test]
+async fn a_joined_peer_reconnects_without_its_code() {
+    let (a, b) = pair(IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
+    let (a_key, b_key) = (a.key(), b.key());
+    let invite = match a
+        .request(Request::Invite {
+            key: None,
+            name: Some("b".to_string()),
+            expose: vec![],
+        })
+        .await
+    {
+        Response::Invite(i) => i,
+        other => panic!("expected an invitation, got {:?}", other),
+    };
+    match b
+        .request(Request::Accept {
+            wait: true,
+            handle: invite,
+            name: Some("a".to_string()),
+        })
+        .await
+    {
+        Response::Accepted(Accepted::Joined { .. }) => {}
+        other => panic!("expected joined, got {:?}", other),
+    }
+    until(20, || sees_online(&a, &b_key, "b")).await;
+
+    a.daemon.peers().sever(&b.daemon.endpoint().id()).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    until(20, || sees_online(&a, &b_key, "b")).await;
+    until(20, || sees_online(&b, &a_key, "a")).await;
+    let Response::List(list) = a.request(Request::List).await else {
+        panic!("list failed");
+    };
+    assert!(
+        !list.refused.iter().any(|r| r.key == b_key),
+        "{:?}",
+        list.refused
+    );
+}
+
 #[tokio::test]
 async fn an_unnamed_peer_still_gets_a_name() {
     let port = echo_server().await;

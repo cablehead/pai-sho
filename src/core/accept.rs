@@ -44,11 +44,12 @@ pub fn is_refusal(reason: &[u8]) -> bool {
 /// Whether the inviter closing a connection with `reason` ends our attempt.
 ///
 /// Only a refused code does: the code is expired or used, and presenting it
-/// again cannot work. A peer we dial by key alone keeps trying, because the
-/// other side may run `invite <key>` after we `accept` (ADR 0006). A peer that
-/// has let us in before is never dropped by this; that is `forget`'s job.
-pub fn refusal_ends_invitation(reason: &[u8], presented_code: bool, joined: bool) -> bool {
-    presented_code && !joined && reason == Refusal::NotAuthorized.as_str().as_bytes()
+/// again cannot work. That holds for a peer that let us in before too, since
+/// the inviter forgets a known peer that presents a stale code. A peer we dial
+/// by key alone keeps trying, because the other side may run `invite <key>`
+/// after we `accept` (ADR 0006).
+pub fn refusal_ends_invitation(reason: &[u8], presented_code: bool) -> bool {
+    presented_code && reason == Refusal::NotAuthorized.as_str().as_bytes()
 }
 
 /// `accept`'s answer, given what it has heard since it started (`baseline`
@@ -80,28 +81,23 @@ mod tests {
 
     #[test]
     fn a_refused_code_ends_the_attempt() {
-        assert!(refusal_ends_invitation(NOT_AUTHORIZED, true, false));
+        assert!(refusal_ends_invitation(NOT_AUTHORIZED, true));
     }
 
     #[test]
     fn a_bare_key_keeps_trying() {
-        assert!(!refusal_ends_invitation(NOT_AUTHORIZED, false, false));
-    }
-
-    #[test]
-    fn a_peer_that_let_us_in_is_not_dropped_by_a_refusal() {
-        assert!(!refusal_ends_invitation(NOT_AUTHORIZED, true, true));
+        assert!(!refusal_ends_invitation(NOT_AUTHORIZED, false));
     }
 
     #[test]
     fn an_enroll_timeout_is_worth_another_try() {
-        assert!(!refusal_ends_invitation(b"enroll timeout", true, false));
+        assert!(!refusal_ends_invitation(b"enroll timeout", true));
     }
 
     #[test]
     fn any_other_close_is_worth_another_try() {
-        assert!(!refusal_ends_invitation(b"replaced", true, false));
-        assert!(!refusal_ends_invitation(b"", true, false));
+        assert!(!refusal_ends_invitation(b"replaced", true));
+        assert!(!refusal_ends_invitation(b"", true));
     }
 
     #[test]

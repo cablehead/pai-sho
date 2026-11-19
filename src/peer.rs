@@ -9,7 +9,7 @@ use crate::core::accept::{self as join, Joining, Verdict};
 use crate::core::backoff::Backoff;
 use crate::core::dial::{self, Keep, Reach};
 use crate::core::refusals::Refusals;
-use crate::core::session::{Action, Admission, ConnId, Refusal, Session};
+use crate::core::session::{Action, Admission, ConnId, KnownClaim, Refusal, Session};
 use crate::enroll::Pins;
 use crate::netstack::{Accept, NetStack};
 use crate::ports::{self, PortRecord, PortStore};
@@ -41,6 +41,10 @@ fn unix_now() -> u64 {
 const DIAL_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long an unknown incoming peer gets to present its enrollment token
 const ENROLL_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a known peer that dials in has to send its first Enroll before we
+/// announce its ports anyway. Our own clients send one at once; an older one
+/// may send none.
+const ENROLL_WORD_WAIT: Duration = Duration::from_secs(2);
 /// How many times to try binding a forwarded port before giving up
 const BIND_ATTEMPTS: u32 = 5;
 /// Delay between bind attempts
@@ -84,6 +88,11 @@ struct Peer {
     enroll_token: std::sync::Mutex<Option<String>>,
     /// Wakes the connection loop to dial now, when a new code arrives.
     redial: Notify,
+    /// Enrolls heard from it, and a wake for each. A peer that dials in waits
+    /// for its first one before we announce: if it carries a stale code, it
+    /// is refused before it hears it was let in.
+    enrolls: AtomicU64,
+    enroll_heard: Notify,
     connection: RwLock<Option<Connection>>,
     /// Who opened the connection above. Written under its write lock, so the
     /// two move together.
@@ -138,6 +147,8 @@ impl Peer {
             dialing: AtomicBool::new(false),
             enroll_token: std::sync::Mutex::new(enroll_token),
             redial: Notify::new(),
+            enrolls: AtomicU64::new(0),
+            enroll_heard: Notify::new(),
             connection: RwLock::new(connection),
             conn_dialed_by_us: AtomicBool::new(false),
             exposed_ports: RwLock::new(Vec::new()),
@@ -581,8 +592,9 @@ impl PeerManager {
                     peer.conn_dialed_by_us.store(true, Ordering::Relaxed);
                     *guard = Some(conn.clone());
                 }
-                // Re-present the enroll token in case the peer never processed
-                // it. Once used, the peer ignores it.
+                // Present the code until the peer has let us in (its first
+                // port announce drops it), say because it was offline when
+                // we took up the invitation.
                 let token = peer.enroll_token.lock().unwrap().clone();
                 if let Some(token) = token {
                     let msg = PeerMessage::enroll(token);
@@ -616,8 +628,7 @@ impl PeerManager {
         }
         let reason = String::from_utf8_lossy(&close.reason).into_owned();
         let presented_code = peer.enroll_token.lock().unwrap().is_some();
-        let joined = peer.joining.borrow().announces > 0;
-        if !join::refusal_ends_invitation(&close.reason, presented_code, joined) {
+        if !join::refusal_ends_invitation(&close.reason, presented_code) {
             peer.joining
                 .send_modify(|j| j.turned_away = Some(reason.clone()));
             return false;
@@ -718,6 +729,9 @@ impl PeerManager {
                 info!("{} exposed ports: {:?}", peer.endpoint_id, ports);
                 manager.update_peer_ports(peer, ports).await;
                 // The first one means it let us in; `accept` waits on this.
+                // The code has done its job: never present it again, or the
+                // peer would take it for a stale one and refuse us.
+                peer.enroll_token.lock().unwrap().take();
                 peer.joining.send_modify(|j| j.announces += 1);
             }
             PeerMessage::Connect { port: _ } => {
@@ -725,23 +739,38 @@ impl PeerManager {
             }
             PeerMessage::Enroll { token, version } => {
                 // Peer is already known. It sends Enroll again to report its
-                // version, and to present a code from a fresh invitation: a
-                // live one still grants its ports.
+                // version (no code), or to present a code from an invitation
+                // it just took up: a live one grants its ports, a stale one
+                // gets it refused and forgotten.
                 if let Some(version) = version {
                     info!("{} reports version {}", peer.endpoint_id, version);
                     *peer.version.write().await = Some(version);
                 }
-                if !token.is_empty() {
-                    let actions = manager
-                        .session
-                        .lock()
-                        .unwrap()
-                        .on_admitted_enroll(peer.endpoint_id, &token);
-                    if !actions.is_empty() {
+                let claim = manager
+                    .session
+                    .lock()
+                    .unwrap()
+                    .on_admitted_enroll(peer.endpoint_id, &token);
+                match claim {
+                    KnownClaim::Ignored => {}
+                    KnownClaim::Granted(actions) => {
                         info!("{} took up a fresh invitation", peer.endpoint_id);
+                        manager.apply(peer, actions).await;
                     }
-                    manager.apply(peer, actions).await;
+                    KnownClaim::Stale => {
+                        let reason = Refusal::NotAuthorized;
+                        info!(
+                            "refused peer {}: {} (stale invitation code)",
+                            peer.endpoint_id,
+                            reason.as_str()
+                        );
+                        manager.note_refusal(peer.endpoint_id, reason);
+                        let _guard = manager.bind_lock.lock().await;
+                        manager.evict(&peer.endpoint_id, reason.as_str()).await;
+                    }
                 }
+                peer.enrolls.fetch_add(1, Ordering::Relaxed);
+                peer.enroll_heard.notify_waiters();
             }
             PeerMessage::Error(e) => {
                 error!("peer error: {}", e);
@@ -1222,10 +1251,44 @@ impl PeerManager {
         *conn_guard = Some(conn.clone());
         drop(conn_guard);
 
+        // Hold the announce until it has said its first word, its Enroll, or
+        // ENROLL_WORD_WAIT passes (an older client may say nothing). A stale
+        // code in that Enroll gets it refused and forgotten before it hears
+        // it was let in.
+        let heard = peer.enrolls.load(Ordering::Relaxed);
         peer.conn_notify.notify_one();
         info!("{} reconnected", remote_id);
 
-        self.apply(&peer, admission).await;
+        let (announce, rest): (Vec<_>, Vec<_>) = admission
+            .into_iter()
+            .partition(|a| matches!(a, Action::Announce { .. }));
+        self.apply(&peer, rest).await;
+        if !announce.is_empty() {
+            let manager = self.clone();
+            tokio::spawn(async move {
+                let deadline = tokio::time::Instant::now() + ENROLL_WORD_WAIT;
+                loop {
+                    // Register before looking, so a wake in between isn't lost.
+                    let wake = peer.enroll_heard.notified();
+                    tokio::pin!(wake);
+                    wake.as_mut().enable();
+                    if peer.enrolls.load(Ordering::Relaxed) != heard {
+                        break;
+                    }
+                    if tokio::time::timeout_at(deadline, wake).await.is_err() {
+                        break;
+                    }
+                }
+                let live = peer.connection.read().await.as_ref().is_some_and(|c| {
+                    c.stable_id() == conn.stable_id() && c.close_reason().is_none()
+                });
+                if peer.removed.load(Ordering::Relaxed) || !live {
+                    return;
+                }
+                let announce = manager.session.lock().unwrap().announce(remote_id);
+                manager.apply(&peer, vec![announce]).await;
+            });
+        }
         Ok(())
     }
 
