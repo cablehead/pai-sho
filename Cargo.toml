@@ -36,13 +36,21 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Concurrent collections
 dashmap = "6"
 
-# TUN owned-network backend (userspace stack). See src/netstack.rs, ADR 0005.
-tokio-smoltcp = "0.6"
-libc = "0.2"
-
 # Misc
 rand = "0.9"
 qrcode = { version = "0.14.1", default-features = false }
+
+# TUN owned-network backend (userspace stack). See src/netstack.rs, ADR 0005.
+# Windows has no tun backend, and the socket owner and mode flags are unix-only.
+[target.'cfg(unix)'.dependencies]
+tokio-smoltcp = "0.6"
+libc = "0.2"
+
+# Windows 10 and later have AF_UNIX sockets. win_uds exposes them, and
+# tokio-util's compat layer adapts its futures-io streams to tokio's traits.
+[target.'cfg(windows)'.dependencies]
+win_uds = { version = "=0.2.4", features = ["async"] }
+tokio-util = { version = "0.7", features = ["compat"] }
 
 [profile.release]
 lto = true

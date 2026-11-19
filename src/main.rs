@@ -16,11 +16,24 @@ A peer's ports come up under the name you gave it, like vibenv-ndyg.pai-sho.",
 )]
 struct Cli {
     /// Path to Unix socket
-    #[arg(long, default_value = "/tmp/pai-sho.sock")]
+    #[arg(long, default_value_t = default_socket())]
     socket: String,
 
     #[command(subcommand)]
     command: Command,
+}
+
+/// /tmp/pai-sho.sock on unix. On Windows, pai-sho.sock in the user's temp
+/// directory (%TEMP%), the nearest thing to /tmp.
+fn default_socket() -> String {
+    if cfg!(windows) {
+        std::env::temp_dir()
+            .join("pai-sho.sock")
+            .to_string_lossy()
+            .into_owned()
+    } else {
+        "/tmp/pai-sho.sock".to_string()
+    }
 }
 
 #[tokio::main]
