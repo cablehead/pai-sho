@@ -365,7 +365,6 @@ struct PeerHeader: View {
 }
 
 /// A key turned away at the door: the start of the key, why, and how often.
-/// Its menu copies the whole key, for `invite <key>`.
 struct RefusedRow: View {
     var refused: Refused
 
@@ -384,18 +383,6 @@ struct RefusedRow: View {
             Text(refused.last, style: .time)
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
-        }
-        .contextMenu {
-            Button {
-                #if os(iOS)
-                UIPasteboard.general.string = refused.key
-                #else
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(refused.key, forType: .string)
-                #endif
-            } label: {
-                Label("Copy key", systemImage: "doc.on.doc")
-            }
         }
         .accessibilityIdentifier("refused-\(refused.key.prefix(8))")
     }
