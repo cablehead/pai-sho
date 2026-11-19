@@ -123,7 +123,11 @@ public struct PaiShoView<Controls: View>: View {
             case .scan:
                 ScanSheet { code in self.sheet = .accept(code) }
             case .accept(let invite):
+                #if os(iOS)
+                AcceptSheet(store: store, invite: invite) { self.sheet = .scan }
+                #else
                 AcceptSheet(store: store, invite: invite)
+                #endif
             case .invite:
                 #if os(macOS)
                 InviteSheet(client: store.client)
@@ -196,6 +200,17 @@ struct PeerList<Controls: View>: View {
                 } header: {
                     peerMenu(PeerHeader(title: store.title(for: peer), status: store.status(of: peer)), peer, row: "\(peer.key)/header", swipe: false)
                         .accessibilityIdentifier("peer-\(store.title(for: peer))")
+                }
+            }
+            if !store.refused.isEmpty {
+                Section {
+                    ForEach(store.refused) { refused in
+                        RefusedRow(refused: refused)
+                    }
+                } header: {
+                    Text("Turned away")
+                } footer: {
+                    Text("Tried to connect without a live invitation of yours.")
                 }
             }
             Section {
@@ -346,6 +361,30 @@ struct PeerHeader: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+    }
+}
+
+/// A key turned away at the door: the start of the key, why, and how often.
+struct RefusedRow: View {
+    var refused: Refused
+
+    var body: some View {
+        HStack {
+            Text(refused.key.prefix(8))
+                .font(.body.monospaced())
+            Text(refused.why)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Spacer()
+            Text(refused.count == 1 ? "once" : "\(refused.count) tries")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(refused.last, style: .time)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityIdentifier("refused-\(refused.key.prefix(8))")
     }
 }
 

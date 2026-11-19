@@ -166,6 +166,52 @@ public struct PortID: Hashable, Sendable {
     }
 }
 
+/// How taking up an invitation came out. See `DaemonClient.accept`.
+public enum AcceptOutcome: Equatable, Sendable {
+    /// The peer let us in, and shares these ports with us.
+    case joined(name: String, ports: [UInt16])
+    /// The peer refused the invitation. pai-sho kept nothing.
+    case refused(reason: String)
+    /// No answer in time. pai-sho keeps the peer and keeps trying.
+    /// `turnedAway` is set when the peer answered and has not let us in yet.
+    case pending(turnedAway: String?)
+    /// A pai-sho older than waiting took it and said only Ok.
+    case sent
+
+    /// What to tell the person who took up the invitation, when it was
+    /// refused.
+    public static let refusedMessage = "This invitation has expired or was already used."
+}
+
+/// A key this pai-sho turned away at the door, from `List`. Shown to the
+/// inviting side, so it can tell who knocked and why.
+public struct Refused: Identifiable, Hashable, Sendable {
+    public var key: String
+    /// "not authorized" (no live code) or "enroll timeout"
+    public var reason: String
+    /// Times turned away in the last hour
+    public var count: Int
+    public var last: Date
+
+    public var id: String { key }
+
+    public init(key: String, reason: String, count: Int, last: Date) {
+        self.key = key
+        self.reason = reason
+        self.count = count
+        self.last = last
+    }
+
+    /// The reason in a few words: what the visitor did, not the protocol.
+    public var why: String {
+        switch reason {
+        case "not authorized": return "expired or used invitation"
+        case "enroll timeout": return "never showed an invitation"
+        default: return reason
+        }
+    }
+}
+
 public enum DaemonError: Error, LocalizedError, Equatable {
     case notRunning
     /// The socket is there but belongs to someone else, as when the daemon
@@ -204,6 +250,30 @@ public struct DaemonClient: Sendable {
         try Self.peers(fromListReply: try await exchange("\"List\"\n"))
     }
 
+    /// The peers, and the keys turned away lately, from one `List`.
+    public func listing() async throws -> (peers: [Peer], refused: [Refused]) {
+        let data = try await exchange("\"List\"\n")
+        return (try Self.peers(fromListReply: data), try Self.refused(fromListReply: data))
+    }
+
+    /// The `refused` of a `List` reply, latest first. Empty from a pai-sho
+    /// older than it.
+    public static func refused(fromListReply data: Data) throws -> [Refused] {
+        let object = try jsonObject(data)
+        guard let list = object["List"] as? [String: Any] else { return [] }
+        let rows = list["refused"] as? [[String: Any]] ?? []
+        return rows.compactMap { row in
+            guard let key = row["key"] as? String else { return nil }
+            let last = (row["last"] as? Double) ?? Double(row["last"] as? Int ?? 0)
+            return Refused(
+                key: key,
+                reason: row["reason"] as? String ?? "",
+                count: row["count"] as? Int ?? 1,
+                last: Date(timeIntervalSince1970: last)
+            )
+        }
+    }
+
     /// Tell the process it is about to be suspended: it says goodbye to each
     /// connected peer, so they stop dialing it, and dials no one itself. Peers
     /// it said goodbye to wait for it to call, which it does once started
@@ -221,10 +291,12 @@ public struct DaemonClient: Sendable {
         throw DaemonError.badResponse
     }
 
-    public func accept(handle: String, name: String?) async throws {
+    /// Take up an invitation, and wait for the peer's answer: up to 15
+    /// seconds in pai-sho, so the exchange is given longer.
+    public func accept(handle: String, name: String?) async throws -> AcceptOutcome {
         let trimmed = handle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw DaemonError.refused("Paste or scan an invitation.") }
-        var body: [String: Any] = ["handle": trimmed]
+        var body: [String: Any] = ["handle": trimmed, "wait": true]
         if let name, !name.isEmpty {
             body["name"] = name
         } else {
@@ -233,7 +305,27 @@ public struct DaemonClient: Sendable {
         let request = try JSONSerialization.data(withJSONObject: ["Accept": body])
         guard var line = String(data: request, encoding: .utf8) else { throw DaemonError.badResponse }
         line.append("\n")
-        try Self.ok(fromReply: try await exchange(line))
+        return try Self.outcome(fromAcceptReply: try await exchange(line, timeout: 25))
+    }
+
+    /// Parse an `Accept` reply: `Accepted`, or `Ok` from a pai-sho older
+    /// than waiting.
+    public static func outcome(fromAcceptReply data: Data) throws -> AcceptOutcome {
+        if let text = String(data: data, encoding: .utf8), text == "\"Ok\"" { return .sent }
+        let object = try jsonObject(data)
+        if let message = object["Error"] as? String { throw DaemonError.refused(message) }
+        guard let accepted = object["Accepted"] as? [String: Any] else { throw DaemonError.badResponse }
+        if let joined = accepted["Joined"] as? [String: Any] {
+            let ports = (joined["ports"] as? [Any] ?? []).compactMap(port)
+            return .joined(name: joined["name"] as? String ?? "", ports: ports)
+        }
+        if let refused = accepted["Refused"] as? [String: Any] {
+            return .refused(reason: refused["reason"] as? String ?? "")
+        }
+        if let pending = accepted["Pending"] as? [String: Any] {
+            return .pending(turnedAway: pending["turned_away"] as? String)
+        }
+        throw DaemonError.badResponse
     }
 
     /// Forget a peer: close it, unbind its ports and revoke its grants. `peer`
@@ -329,18 +421,18 @@ public struct DaemonClient: Sendable {
         return object
     }
 
-    private func exchange(_ line: String) async throws -> Data {
+    private func exchange(_ line: String, timeout: Int = 5) async throws -> Data {
         let path = socketPath
         return try await Task.detached(priority: .userInitiated) {
-            try Self.exchangeSync(line, path: path)
+            try Self.exchangeSync(line, path: path, timeout: timeout)
         }.value
     }
 
-    private static func exchangeSync(_ line: String, path: String) throws -> Data {
+    private static func exchangeSync(_ line: String, path: String, timeout seconds: Int) throws -> Data {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw DaemonError.notRunning }
         defer { close(fd) }
-        var timeout = timeval(tv_sec: 5, tv_usec: 0)
+        var timeout = timeval(tv_sec: seconds, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         var address = sockaddr_un()

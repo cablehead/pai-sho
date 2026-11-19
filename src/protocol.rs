@@ -23,10 +23,14 @@ pub enum Request {
         /// Ports granted to whoever takes the invitation up
         expose: Vec<u16>,
     },
-    /// Take up an invitation, or reach a peer known by key
+    /// Take up an invitation, or reach a peer known by key. With `wait`, answer
+    /// `Accepted` once the peer lets us in, refuses us, or the wait runs out;
+    /// without it, answer `Ok` at once, as daemons before `wait` always did.
     Accept {
         handle: String,
         name: Option<String>,
+        #[serde(default)]
+        wait: bool,
     },
     /// Forget a peer
     Forget {
@@ -76,7 +80,23 @@ pub enum Response {
     Key(String),
     List(ListInfo),
     Invite(String),
+    /// How an `Accept` with `wait` came out
+    Accepted(Accepted),
     Error(String),
+}
+
+/// How taking up an invitation came out.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum Accepted {
+    /// The peer let us in. `ports` are the ones it shares with us.
+    Joined { name: String, ports: Vec<u16> },
+    /// The peer refused the invitation: its code expired or was already used.
+    /// Nothing was kept.
+    Refused { reason: String },
+    /// No answer within the wait. The peer stays saved and is dialed with
+    /// backoff. `turned_away` is set when it answered and refused us, which a
+    /// peer we name by key alone can do until it invites our key.
+    Pending { turned_away: Option<String> },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -96,6 +116,22 @@ pub struct ListInfo {
     pub i_expose: Vec<u16>,
     /// Who each port is granted to, one row per (port, grantee)
     pub grants: Vec<GrantInfo>,
+    /// Keys turned away at the door in the last hour, latest first. Empty from
+    /// a daemon older than this field.
+    #[serde(default)]
+    pub refused: Vec<RefusedInfo>,
+}
+
+/// A key this daemon turned away, and why.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RefusedInfo {
+    pub key: String,
+    /// "not authorized" (no live code) or "enroll timeout"
+    pub reason: String,
+    /// Times turned away in the last hour
+    pub count: u32,
+    /// Unix seconds of the last time
+    pub last: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

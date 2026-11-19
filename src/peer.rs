@@ -5,13 +5,15 @@
 //! a valid enrollment token. Anyone else is refused -- no announcement, no
 //! tunnel.
 
+use crate::core::accept::{self as join, Joining, Verdict};
 use crate::core::backoff::Backoff;
 use crate::core::dial::{self, Keep, Reach};
-use crate::core::session::{Action, Admission, ConnId, Refusal, Session};
+use crate::core::refusals::Refusals;
+use crate::core::session::{Action, Admission, ConnId, KnownClaim, Refusal, Session};
 use crate::enroll::Pins;
 use crate::netstack::{Accept, NetStack};
 use crate::ports::{self, PortRecord, PortStore};
-use crate::protocol::{BoundAt, PeerInfo, PeerMessage, ALPN};
+use crate::protocol::{Accepted, BoundAt, PeerInfo, PeerMessage, RefusedInfo, ALPN};
 use crate::surface::{self, Surface, SurfaceStore};
 use crate::tunnel::{self, PeerConnection};
 use anyhow::{anyhow, Context, Result};
@@ -24,13 +26,25 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
-use tokio::sync::{mpsc, Mutex, Notify, RwLock};
+use tokio::sync::{mpsc, watch, Mutex, Notify, RwLock};
 use tracing::{error, info, warn};
+
+/// Seconds since the Unix epoch, for the refusal table.
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
 
 /// How long to let a dial run before giving up and backing off
 const DIAL_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long an unknown incoming peer gets to present its enrollment token
 const ENROLL_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a known peer that dials in has to send its first Enroll before we
+/// announce its ports anyway. Our own clients send one at once; an older one
+/// may send none.
+const ENROLL_WORD_WAIT: Duration = Duration::from_secs(2);
 /// How many times to try binding a forwarded port before giving up
 const BIND_ATTEMPTS: u32 = 5;
 /// Delay between bind attempts
@@ -74,6 +88,11 @@ struct Peer {
     enroll_token: std::sync::Mutex<Option<String>>,
     /// Wakes the connection loop to dial now, when a new code arrives.
     redial: Notify,
+    /// Enrolls heard from it, and a wake for each. A peer that dials in waits
+    /// for its first one before we announce: if it carries a stale code, it
+    /// is refused before it hears it was let in.
+    enrolls: AtomicU64,
+    enroll_heard: Notify,
     connection: RwLock<Option<Connection>>,
     /// Who opened the connection above. Written under its write lock, so the
     /// two move together.
@@ -89,6 +108,9 @@ struct Peer {
     bindings: DashMap<u16, Binding>,
     /// Notified when a new connection replaces the current one
     conn_notify: Notify,
+    /// What we have heard from it while taking up its invitation, for
+    /// `accept` to wait on
+    joining: watch::Sender<Joining>,
     /// Set when peer is removed; signals connection loop to exit
     removed: AtomicBool,
 }
@@ -125,6 +147,8 @@ impl Peer {
             dialing: AtomicBool::new(false),
             enroll_token: std::sync::Mutex::new(enroll_token),
             redial: Notify::new(),
+            enrolls: AtomicU64::new(0),
+            enroll_heard: Notify::new(),
             connection: RwLock::new(connection),
             conn_dialed_by_us: AtomicBool::new(false),
             exposed_ports: RwLock::new(Vec::new()),
@@ -133,6 +157,7 @@ impl Peer {
             bindings: DashMap::new(),
             conn_notify: Notify::new(),
             removed: AtomicBool::new(false),
+            joining: watch::Sender::new(Joining::default()),
         })
     }
 }
@@ -171,6 +196,8 @@ pub struct PeerManager {
     /// its own number if free, else one the OS picks (see src/ports.rs). True
     /// on iOS, where an app can add no address and can bind only 127.0.0.1.
     localhost_only: AtomicBool,
+    /// Keys turned away at the door, for `list`
+    refusals: std::sync::Mutex<Refusals>,
     /// Set by `sleep`: we said goodbye and dial no one until restarted
     sleeping: AtomicBool,
 }
@@ -204,6 +231,7 @@ impl PeerManager {
             bind_lock: Mutex::new(()),
             localhost_only: AtomicBool::new(localhost_only),
             sleeping: AtomicBool::new(false),
+            refusals: std::sync::Mutex::new(Refusals::new()),
         }
     }
 
@@ -268,6 +296,61 @@ impl PeerManager {
         name: Option<String>,
         code: Option<String>,
     ) -> Result<()> {
+        self.take_up(endpoint_id, name, code).await.map(|_| ())
+    }
+
+    /// `add_peer`, then wait up to `wait` for the peer's answer: it let us in,
+    /// it refused the code, or neither in time. See src/core/accept.rs.
+    pub async fn accept(
+        self: &Arc<Self>,
+        endpoint_id: EndpointId,
+        name: Option<String>,
+        code: Option<String>,
+        wait: Duration,
+    ) -> Result<Accepted> {
+        // Read before the code goes out, so an answer to it counts.
+        let baseline = self
+            .peers
+            .get(&endpoint_id)
+            .map(|p| p.joining.borrow().announces)
+            .unwrap_or(0);
+        let peer = self.take_up(endpoint_id, name, code).await?;
+        let mut heard = peer.joining.subscribe();
+        let deadline = tokio::time::Instant::now() + wait;
+        let verdict = loop {
+            let timed_out = tokio::time::Instant::now() >= deadline;
+            let connected = peer
+                .connection
+                .read()
+                .await
+                .as_ref()
+                .is_some_and(|c| c.close_reason().is_none());
+            let now = heard.borrow_and_update().clone();
+            if let Some(verdict) = join::verdict(&now, baseline, timed_out, connected) {
+                break verdict;
+            }
+            // Wake on news, or soon after, to look at the clock again.
+            let soon = tokio::time::Instant::now() + Duration::from_millis(250);
+            let _ = tokio::time::timeout_at(deadline.min(soon), heard.changed()).await;
+        };
+        Ok(match verdict {
+            Verdict::Joined => Accepted::Joined {
+                name: peer
+                    .label()
+                    .unwrap_or_else(|| crate::core::session::default_name(&endpoint_id)),
+                ports: peer.exposed_ports.read().await.clone(),
+            },
+            Verdict::Refused(reason) => Accepted::Refused { reason },
+            Verdict::Pending { turned_away } => Accepted::Pending { turned_away },
+        })
+    }
+
+    async fn take_up(
+        self: &Arc<Self>,
+        endpoint_id: EndpointId,
+        name: Option<String>,
+        code: Option<String>,
+    ) -> Result<Arc<Peer>> {
         if let Some(peer) = self.peers.get(&endpoint_id).map(|p| p.clone()) {
             // Taken up again, say because the first invitation expired before
             // it reached the peer, which then refuses it on every dial. Present
@@ -293,13 +376,12 @@ impl PeerManager {
             if let Some(name) = name.filter(|n| peer.label().as_ref() != Some(n)) {
                 self.rename_peer(&endpoint_id.to_string(), name).await?;
             }
-            return Ok(());
+            return Ok(peer);
         }
         // Pin it first, so a restart dials it again rather than forgetting it.
         self.pins
             .add_dialed(&endpoint_id.to_string(), name.as_deref())?;
-        self.start_dialing(endpoint_id, name, code);
-        Ok(())
+        Ok(self.start_dialing(endpoint_id, name, code))
     }
 
     /// A peer whose invitation we took up before a restart: dial it again.
@@ -318,7 +400,7 @@ impl PeerManager {
         endpoint_id: EndpointId,
         name: Option<String>,
         code: Option<String>,
-    ) {
+    ) -> Arc<Peer> {
         self.session
             .lock()
             .unwrap()
@@ -328,7 +410,8 @@ impl PeerManager {
         // still ours: its connection loop retries with backoff.
         let peer = Peer::new(endpoint_id, name, true, code, None);
         self.peers.insert(endpoint_id, peer.clone());
-        self.spawn_connection_loop(peer);
+        self.spawn_connection_loop(peer.clone());
+        peer
     }
 
     /// A peer loaded from a pin. Wait for them to call. After first contact
@@ -398,6 +481,9 @@ impl PeerManager {
                         return;
                     }
                     warn!("{} disconnected: {}", peer.endpoint_id, e);
+                }
+                if manager.turned_away(&peer).await {
+                    return;
                 }
             }
 
@@ -506,8 +592,9 @@ impl PeerManager {
                     peer.conn_dialed_by_us.store(true, Ordering::Relaxed);
                     *guard = Some(conn.clone());
                 }
-                // Re-present the enroll token in case the peer never processed
-                // it. Once used, the peer ignores it.
+                // Present the code until the peer has let us in (its first
+                // port announce drops it), say because it was offline when
+                // we took up the invitation.
                 let token = peer.enroll_token.lock().unwrap().clone();
                 if let Some(token) = token {
                     let msg = PeerMessage::enroll(token);
@@ -520,6 +607,40 @@ impl PeerManager {
                 break;
             }
         }
+    }
+
+    /// Whether the peer closed our connection by refusing us. A refused code
+    /// ends the attempt: the peer is dropped here, unpinned and all, and
+    /// `accept` hears why. Any other refusal is noted for `accept` and the
+    /// loop keeps dialing. See src/core/accept.rs.
+    async fn turned_away(&self, peer: &Arc<Peer>) -> bool {
+        let closed = peer
+            .connection
+            .read()
+            .await
+            .as_ref()
+            .and_then(|c| c.close_reason());
+        let Some(iroh::endpoint::ConnectionError::ApplicationClosed(close)) = closed else {
+            return false;
+        };
+        if !join::is_refusal(&close.reason) {
+            return false;
+        }
+        let reason = String::from_utf8_lossy(&close.reason).into_owned();
+        let presented_code = peer.enroll_token.lock().unwrap().is_some();
+        if !join::refusal_ends_invitation(&close.reason, presented_code) {
+            peer.joining
+                .send_modify(|j| j.turned_away = Some(reason.clone()));
+            return false;
+        }
+        warn!(
+            "{} refused our invitation ({}): it expired or was already used; dropping it",
+            peer.endpoint_id, reason
+        );
+        peer.joining.send_modify(|j| j.ended = Some(reason));
+        let _guard = self.bind_lock.lock().await;
+        self.evict(&peer.endpoint_id, "refused").await;
+        true
     }
 
     /// Wait for the peer to connect to us. A notification left from an earlier
@@ -607,29 +728,49 @@ impl PeerManager {
             PeerMessage::ExposedPorts(ports) => {
                 info!("{} exposed ports: {:?}", peer.endpoint_id, ports);
                 manager.update_peer_ports(peer, ports).await;
+                // The first one means it let us in; `accept` waits on this.
+                // The code has done its job: never present it again, or the
+                // peer would take it for a stale one and refuse us.
+                peer.enroll_token.lock().unwrap().take();
+                peer.joining.send_modify(|j| j.announces += 1);
             }
             PeerMessage::Connect { port: _ } => {
                 warn!("unexpected Connect message on control stream");
             }
             PeerMessage::Enroll { token, version } => {
                 // Peer is already known. It sends Enroll again to report its
-                // version, and to present a code from a fresh invitation: a
-                // live one still grants its ports.
+                // version (no code), or to present a code from an invitation
+                // it just took up: a live one grants its ports, a stale one
+                // gets it refused and forgotten.
                 if let Some(version) = version {
                     info!("{} reports version {}", peer.endpoint_id, version);
                     *peer.version.write().await = Some(version);
                 }
-                if !token.is_empty() {
-                    let actions = manager
-                        .session
-                        .lock()
-                        .unwrap()
-                        .on_admitted_enroll(peer.endpoint_id, &token);
-                    if !actions.is_empty() {
+                let claim = manager
+                    .session
+                    .lock()
+                    .unwrap()
+                    .on_admitted_enroll(peer.endpoint_id, &token);
+                match claim {
+                    KnownClaim::Ignored => {}
+                    KnownClaim::Granted(actions) => {
                         info!("{} took up a fresh invitation", peer.endpoint_id);
+                        manager.apply(peer, actions).await;
                     }
-                    manager.apply(peer, actions).await;
+                    KnownClaim::Stale => {
+                        let reason = Refusal::NotAuthorized;
+                        info!(
+                            "refused peer {}: {} (stale invitation code)",
+                            peer.endpoint_id,
+                            reason.as_str()
+                        );
+                        manager.note_refusal(peer.endpoint_id, reason);
+                        let _guard = manager.bind_lock.lock().await;
+                        manager.evict(&peer.endpoint_id, reason.as_str()).await;
+                    }
                 }
+                peer.enrolls.fetch_add(1, Ordering::Relaxed);
+                peer.enroll_heard.notify_waiters();
             }
             PeerMessage::Error(e) => {
                 error!("peer error: {}", e);
@@ -1110,10 +1251,44 @@ impl PeerManager {
         *conn_guard = Some(conn.clone());
         drop(conn_guard);
 
+        // Hold the announce until it has said its first word, its Enroll, or
+        // ENROLL_WORD_WAIT passes (an older client may say nothing). A stale
+        // code in that Enroll gets it refused and forgotten before it hears
+        // it was let in.
+        let heard = peer.enrolls.load(Ordering::Relaxed);
         peer.conn_notify.notify_one();
         info!("{} reconnected", remote_id);
 
-        self.apply(&peer, admission).await;
+        let (announce, rest): (Vec<_>, Vec<_>) = admission
+            .into_iter()
+            .partition(|a| matches!(a, Action::Announce { .. }));
+        self.apply(&peer, rest).await;
+        if !announce.is_empty() {
+            let manager = self.clone();
+            tokio::spawn(async move {
+                let deadline = tokio::time::Instant::now() + ENROLL_WORD_WAIT;
+                loop {
+                    // Register before looking, so a wake in between isn't lost.
+                    let wake = peer.enroll_heard.notified();
+                    tokio::pin!(wake);
+                    wake.as_mut().enable();
+                    if peer.enrolls.load(Ordering::Relaxed) != heard {
+                        break;
+                    }
+                    if tokio::time::timeout_at(deadline, wake).await.is_err() {
+                        break;
+                    }
+                }
+                let live = peer.connection.read().await.as_ref().is_some_and(|c| {
+                    c.stable_id() == conn.stable_id() && c.close_reason().is_none()
+                });
+                if peer.removed.load(Ordering::Relaxed) || !live {
+                    return;
+                }
+                let announce = manager.session.lock().unwrap().announce(remote_id);
+                manager.apply(&peer, vec![announce]).await;
+            });
+        }
         Ok(())
     }
 
@@ -1195,14 +1370,17 @@ impl PeerManager {
             actions.iter().find(|a| matches!(a, Action::Refuse { .. }))
         {
             info!("refused peer {}: {}", remote_id, reason.as_str());
+            self.note_refusal(remote_id, *reason);
             conn.close(0u32.into(), reason.as_str().as_bytes());
             return Ok(());
         }
 
         if !actions.iter().any(|a| matches!(a, Action::Admit { .. })) {
+            self.note_refusal(remote_id, Refusal::NotAuthorized);
             conn.close(0u32.into(), Refusal::NotAuthorized.as_str().as_bytes());
             return Ok(());
         }
+        self.refusals.lock().unwrap().clear(&remote_id);
 
         let label = self.session.lock().unwrap().label_of(&remote_id);
         info!(
@@ -1220,6 +1398,29 @@ impl PeerManager {
 
         self.apply(&peer, actions).await;
         Ok(())
+    }
+
+    fn note_refusal(&self, key: EndpointId, reason: Refusal) {
+        self.refusals
+            .lock()
+            .unwrap()
+            .record(key, reason, unix_now());
+    }
+
+    /// Keys turned away at the door in the last hour, latest first, leaving
+    /// out any that have since got in.
+    pub fn refused(&self) -> Vec<RefusedInfo> {
+        let recent = self.refusals.lock().unwrap().recent(unix_now());
+        recent
+            .into_iter()
+            .filter(|r| !self.peers.contains_key(&r.key))
+            .map(|r| RefusedInfo {
+                key: r.key.to_string(),
+                reason: r.reason.as_str().to_string(),
+                count: r.count,
+                last: r.last,
+            })
+            .collect()
     }
 
     /// Tell a peer our crate version on an Enroll they already know how to

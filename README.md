@@ -42,8 +42,14 @@ name:
 ```sh
 # laptop
 pai-sho accept 5hc4bjqfp6...7fd25613dd... --as buildbox
+# joining buildbox...
+# joined buildbox; it shares 8080
 curl http://buildbox.pai-sho:8080
 ```
+
+`accept` waits for the box to answer. If the code has expired or was already
+used, it says so and exits 1, keeping nothing: ask for a new invitation
+([ADR 0010](docs/adr/0010-accept-waits-for-an-answer.md)).
 
 ### A laptop boots a VM
 
@@ -231,7 +237,10 @@ that key, so a peer cannot pass its access on to another machine
 
 **Invitations.** A connection from an unknown key is refused unless it carries a
 code from `invite`. The code is spent on use, and the peer it admitted is
-remembered across restarts. An invitation is
+remembered across restarts. A used or expired code is refused even from a key
+the inviter knows, so scanning an old invitation again does not get you back
+in. `list` shows the keys turned away in the last hour
+under `refused`, with why and how often. An invitation is
 `<key>.<code>`: the key says who to dial, the code admits you. When you already
 know a peer's key, `invite <key>` authorizes it with no secret created at all
 ([ADR 0006](docs/adr/0006-invitations.md),

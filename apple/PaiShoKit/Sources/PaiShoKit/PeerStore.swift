@@ -12,6 +12,9 @@ public final class PeerStore {
     public let opensByName: Bool
 
     public private(set) var peers: [Peer] = []
+    /// Keys this pai-sho turned away in the last hour, latest first: someone
+    /// who tried an invitation of ours that had expired or was used.
+    public private(set) var refused: [Refused] = []
     /// Why the last refresh failed, kept only while there are no peers to show
     public private(set) var problem: String?
     public private(set) var loadedOnce = false
@@ -103,7 +106,9 @@ public final class PeerStore {
 
     public func refresh() async {
         do {
-            let next = Self.keepingPorts(of: Self.known(in: defaults), in: try await client.list())
+            let listing = try await client.listing()
+            let next = Self.keepingPorts(of: Self.known(in: defaults), in: listing.peers)
+            if listing.refused != refused { refused = listing.refused }
             loadedOnce = true
             reachable = true
             problem = nil
@@ -120,10 +125,14 @@ public final class PeerStore {
         }
     }
 
-    public func accept(handle: String, name: String) async throws {
+    /// Take up an invitation, and say how it came out. A refused one leaves
+    /// nothing behind.
+    @discardableResult
+    public func accept(handle: String, name: String) async throws -> AcceptOutcome {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        try await client.accept(handle: handle, name: trimmed.isEmpty ? nil : trimmed)
+        let outcome = try await client.accept(handle: handle, name: trimmed.isEmpty ? nil : trimmed)
         await refresh()
+        return outcome
     }
 
     /// Forget a peer, here and in pai-sho. To reach it again takes a new
