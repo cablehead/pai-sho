@@ -476,6 +476,48 @@ async fn an_invitation_can_bring_its_own_grant() {
     assert_eq!(&buf, b"carried");
 }
 
+/// A device that already knows us takes a fresh invitation, say after its
+/// grant was lost. Still connected, it gets the invitation's port.
+#[tokio::test]
+async fn a_known_peer_taking_a_fresh_invitation_gets_its_grant() {
+    let port = echo_server().await;
+    let (a, b) = pair(IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
+    enroll(&a, &b, "b").await;
+    let b_key = b.key();
+    until(20, || sees_online(&a, &b_key, "b")).await;
+
+    let invite = match a
+        .request(Request::Invite {
+            key: None,
+            name: None,
+            expose: vec![port],
+        })
+        .await
+    {
+        Response::Invite(i) => i,
+        other => panic!("expected an invitation, got {:?}", other),
+    };
+    match b
+        .request(Request::Accept {
+            handle: invite,
+            name: None,
+        })
+        .await
+    {
+        Response::Ok => {}
+        other => panic!("accept failed: {:?}", other),
+    }
+
+    let addr = bound_addr(&b, port).await;
+    let mut sock = TcpStream::connect(addr).await.unwrap();
+    sock.write_all(b"again").await.unwrap();
+    let mut buf = [0u8; 5];
+    sock.read_exact(&mut buf).await.unwrap();
+    assert_eq!(&buf, b"again");
+    // It is still the peer it was.
+    until(5, || sees_online(&a, &b_key, "b")).await;
+}
+
 #[tokio::test]
 async fn an_unnamed_peer_still_gets_a_name() {
     let port = echo_server().await;

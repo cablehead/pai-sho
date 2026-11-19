@@ -260,7 +260,8 @@ impl PeerManager {
 
     /// Take up an invitation, or reach a peer known by key. We dial this peer
     /// and keep dialing it. A code, when there is one, is presented on connect
-    /// and on every reconnect (the peer ignores it once we are known).
+    /// and on every reconnect. A peer that already knows us still takes a live
+    /// code's ports, and ignores a used one.
     pub async fn add_peer(
         self: &Arc<Self>,
         endpoint_id: EndpointId,
@@ -271,10 +272,22 @@ impl PeerManager {
             // Taken up again, say because the first invitation expired before
             // it reached the peer, which then refuses it on every dial. Present
             // the new code from now on, and dial now rather than after the
-            // backoff.
+            // backoff. Already connected, present it now too: the peer grants
+            // a live code's ports even to a key it knows.
             if let Some(code) = code {
-                *peer.enroll_token.lock().unwrap() = Some(code);
+                *peer.enroll_token.lock().unwrap() = Some(code.clone());
                 peer.redial.notify_one();
+                let live = peer
+                    .connection
+                    .read()
+                    .await
+                    .clone()
+                    .filter(|c| c.close_reason().is_none());
+                if let Some(conn) = live {
+                    if let Err(e) = Self::send_message(&conn, &PeerMessage::enroll(code)).await {
+                        warn!("failed to send enroll token: {}", e);
+                    }
+                }
             }
             // The name given this time wins.
             if let Some(name) = name.filter(|n| peer.label().as_ref() != Some(n)) {
@@ -493,8 +506,8 @@ impl PeerManager {
                     peer.conn_dialed_by_us.store(true, Ordering::Relaxed);
                     *guard = Some(conn.clone());
                 }
-                // Re-present the enroll token in case the peer never
-                // processed it (it ignores the message once we are pinned)
+                // Re-present the enroll token in case the peer never processed
+                // it. Once used, the peer ignores it.
                 let token = peer.enroll_token.lock().unwrap().clone();
                 if let Some(token) = token {
                     let msg = PeerMessage::enroll(token);
@@ -598,12 +611,24 @@ impl PeerManager {
             PeerMessage::Connect { port: _ } => {
                 warn!("unexpected Connect message on control stream");
             }
-            PeerMessage::Enroll { version, .. } => {
-                // Peer is already known; nothing to enroll. Version, if any,
-                // is the reason this message shows up again after admission.
+            PeerMessage::Enroll { token, version } => {
+                // Peer is already known. It sends Enroll again to report its
+                // version, and to present a code from a fresh invitation: a
+                // live one still grants its ports.
                 if let Some(version) = version {
                     info!("{} reports version {}", peer.endpoint_id, version);
                     *peer.version.write().await = Some(version);
+                }
+                if !token.is_empty() {
+                    let actions = manager
+                        .session
+                        .lock()
+                        .unwrap()
+                        .on_admitted_enroll(peer.endpoint_id, &token);
+                    if !actions.is_empty() {
+                        info!("{} took up a fresh invitation", peer.endpoint_id);
+                    }
+                    manager.apply(peer, actions).await;
                 }
             }
             PeerMessage::Error(e) => {
@@ -1198,7 +1223,7 @@ impl PeerManager {
     }
 
     /// Tell a peer our crate version on an Enroll they already know how to
-    /// read. Token is empty: they are already admitted and ignore Enroll.
+    /// read. Token is empty: they are already admitted, and there is no code.
     async fn send_version(peer: &Peer) {
         let msg = PeerMessage::enroll("");
 
