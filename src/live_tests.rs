@@ -10,7 +10,7 @@
 //! src/core/session.rs, without any of this machinery.
 
 use crate::daemon::Daemon;
-use crate::protocol::{Request, Response, ALPN, VERSION};
+use crate::protocol::{Accepted, Request, Response, ALPN, VERSION};
 use iroh::address_lookup::memory::MemoryLookup;
 use iroh::endpoint::{presets, PortmapperConfig};
 use iroh::{Endpoint, EndpointAddr, RelayMode};
@@ -135,6 +135,7 @@ async fn enroll(a: &TestDaemon, b: &TestDaemon, name: &str) {
 
     match b
         .request(Request::Accept {
+            wait: false,
             handle: invite,
             name: Some("a".to_string()),
         })
@@ -348,6 +349,7 @@ async fn an_unenrolled_peer_is_refused() {
 
     // b reaches for a by key alone, with no invitation. a admits nothing.
     b.request(Request::Accept {
+        wait: false,
         handle: a.key(),
         name: None,
     })
@@ -396,6 +398,7 @@ async fn a_peer_added_before_its_daemon_is_up_is_still_recorded() {
     // A key that resolves to nothing: the dial cannot succeed.
     let absent = iroh::SecretKey::from_bytes(&[7u8; 32]).public().to_string();
     b.request(Request::Accept {
+        wait: false,
         handle: absent.clone(),
         name: None,
     })
@@ -463,6 +466,7 @@ async fn an_invitation_can_bring_its_own_grant() {
 
     // One command on b, and the port is reachable. No expose step.
     b.request(Request::Accept {
+        wait: false,
         handle: invite,
         name: Some("a".into()),
     })
@@ -499,6 +503,7 @@ async fn a_known_peer_taking_a_fresh_invitation_gets_its_grant() {
     };
     match b
         .request(Request::Accept {
+            wait: false,
             handle: invite,
             name: None,
         })
@@ -516,6 +521,74 @@ async fn a_known_peer_taking_a_fresh_invitation_gets_its_grant() {
     assert_eq!(&buf, b"again");
     // It is still the peer it was.
     until(5, || sees_online(&a, &b_key, "b")).await;
+}
+
+/// `accept` waits for the answer: a live invitation answers with the ports
+/// it carries.
+#[tokio::test]
+async fn accept_answers_joined_with_the_ports() {
+    let port = echo_server().await;
+    let (a, b) = pair(IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
+    let invite = match a
+        .request(Request::Invite {
+            key: None,
+            name: None,
+            expose: vec![port],
+        })
+        .await
+    {
+        Response::Invite(i) => i,
+        other => panic!("expected an invitation, got {:?}", other),
+    };
+    match b
+        .request(Request::Accept {
+            wait: true,
+            handle: invite,
+            name: Some("a".to_string()),
+        })
+        .await
+    {
+        Response::Accepted(Accepted::Joined { name, ports }) => {
+            assert_eq!(name, "a");
+            assert_eq!(ports, vec![port]);
+        }
+        other => panic!("expected joined, got {:?}", other),
+    }
+}
+
+/// A dead code is refused, and `accept` says so instead of leaving a peer
+/// that redials forever. The inviter lists the key it turned away.
+#[tokio::test]
+async fn a_dead_code_is_refused_and_nothing_is_kept() {
+    let (a, b) = pair(IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
+    // A well-formed invitation whose code `a` never minted.
+    let dead = format!("{}.{}", a.key(), "00".repeat(16));
+    match b
+        .request(Request::Accept {
+            wait: true,
+            handle: dead,
+            name: None,
+        })
+        .await
+    {
+        Response::Accepted(Accepted::Refused { reason }) => {
+            assert_eq!(reason, "not authorized")
+        }
+        other => panic!("expected refused, got {:?}", other),
+    }
+    assert!(b.daemon.peers().list().await.is_empty());
+    let b_key = b.key();
+    let refused = match a.request(Request::List).await {
+        Response::List(info) => info.refused,
+        other => panic!("expected a list, got {:?}", other),
+    };
+    assert!(
+        refused
+            .iter()
+            .any(|r| r.key == b_key && r.reason == "not authorized"),
+        "{:?}",
+        refused
+    );
 }
 
 #[tokio::test]
@@ -536,6 +609,7 @@ async fn an_unnamed_peer_still_gets_a_name() {
         other => panic!("expected an invitation, got {:?}", other),
     };
     b.request(Request::Accept {
+        wait: false,
         handle: invite,
         name: None,
     })
@@ -1045,6 +1119,7 @@ async fn a_fresh_invitation_replaces_a_refused_one() {
     let stale = format!("{}.{}", a_key, "00".repeat(16));
     match b
         .request(Request::Accept {
+            wait: false,
             handle: stale,
             name: Some("old".to_string()),
         })

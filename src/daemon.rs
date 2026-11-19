@@ -5,7 +5,7 @@ use crate::core::session::Session;
 use crate::enroll::Pins;
 use crate::peer::PeerManager;
 use crate::ports::PortStore;
-use crate::protocol::{GrantInfo, ListInfo, Request, Response, ALPN, VERSION};
+use crate::protocol::{Accepted, GrantInfo, ListInfo, Request, Response, ALPN, VERSION};
 use crate::surface::SurfaceStore;
 use anyhow::{anyhow, Context, Result};
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
@@ -273,12 +273,24 @@ impl Daemon {
     /// Take up an invitation, or reach a peer known by key. Either way we dial
     /// and the peer becomes ours; an invitation also carries the code to
     /// present.
-    async fn accept(&self, handle: &str, name: Option<String>) -> Result<()> {
+    async fn accept(
+        &self,
+        handle: &str,
+        name: Option<String>,
+        wait: bool,
+    ) -> Result<Option<Accepted>> {
         let handle: Handle = handle.parse()?;
-        self.peers
-            .add_peer(handle.key(), name, handle.code())
+        if !wait {
+            self.peers
+                .add_peer(handle.key(), name, handle.code())
+                .await?;
+            return Ok(None);
+        }
+        let accepted = self
+            .peers
+            .accept(handle.key(), name, handle.code(), ACCEPT_WAIT)
             .await?;
-        Ok(())
+        Ok(Some(accepted))
     }
 
     /// Grant `port` to each peer in `to` and re-announce
@@ -317,6 +329,7 @@ impl Daemon {
                     to: to.to_string(),
                 })
                 .collect(),
+            refused: self.peers.refused(),
         }
     }
 
@@ -324,10 +337,13 @@ impl Daemon {
     pub async fn handle_request(self: &Arc<Self>, request: Request) -> Response {
         match request {
             Request::Invite { key, name, expose } => self.invite(key, name, expose).await,
-            Request::Accept { handle, name } => match self.accept(&handle, name).await {
-                Ok(()) => Response::Ok,
-                Err(e) => Response::Error(e.to_string()),
-            },
+            Request::Accept { handle, name, wait } => {
+                match self.accept(&handle, name, wait).await {
+                    Ok(None) => Response::Ok,
+                    Ok(Some(accepted)) => Response::Accepted(accepted),
+                    Err(e) => Response::Error(e.to_string()),
+                }
+            }
             Request::Forget { peer } => match self.peers.remove_peer(&peer).await {
                 Ok(()) => Response::Ok,
                 Err(e) => Response::Error(e.to_string()),
@@ -421,6 +437,10 @@ impl ProtocolHandler for PaiShoProtocol {
 }
 
 /// The TUN backend's reserved resolver address (answers `.pai-sho` on :53 in-stack).
+/// How long `accept` waits for the peer to let it in or refuse it. One dial
+/// gets 15 seconds (ADR 0008), and a peer we already reach answers at once.
+const ACCEPT_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
+
 const TUN_RESOLVER_IP: std::net::Ipv4Addr = std::net::Ipv4Addr::new(10, 99, 0, 53);
 
 #[allow(clippy::too_many_arguments)]
