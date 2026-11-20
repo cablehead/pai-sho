@@ -19,9 +19,7 @@ pub mod launchd;
 mod live_tests;
 #[cfg(unix)]
 pub mod netstack;
-#[cfg(not(unix))]
-#[path = "netstack_unsupported.rs"]
-pub mod netstack;
+pub mod network;
 pub mod peer;
 pub mod ports;
 pub mod protocol;

@@ -9,7 +9,7 @@ use crate::core::backoff::Backoff;
 use crate::core::dial::{self, Keep, Reach};
 use crate::core::session::{Action, Admission, ConnId, Refusal, Session};
 use crate::enroll::Pins;
-use crate::netstack::{Accept, NetStack};
+use crate::network::{Accept, Network};
 use crate::ports::{self, PortRecord, PortStore};
 use crate::protocol::{BoundAt, PeerInfo, PeerMessage, ALPN};
 use crate::surface::{self, Surface, SurfaceStore};
@@ -157,9 +157,8 @@ pub struct PeerManager {
     /// The local number each peer port got at 127.0.0.1, persisted across
     /// restarts. Used only when every peer binds there.
     ports: PortStore,
-    /// TUN owned-network backend. When present, surfaces bind on the TUN via a
-    /// userspace stack instead of loopback (ADR 0005); None = loopback backend.
-    netstack: Option<NetStack>,
+    /// Where surfaces live: loopback, or the tun network (ADR 0005)
+    network: Network,
     /// This node's own name. The owned resolver answers `<self_name>.pai-sho`
     /// with 127.0.0.1, so local traffic uses the same origin peers do.
     self_name: Option<String>,
@@ -185,7 +184,7 @@ impl PeerManager {
         grants: crate::grant_store::GrantStore,
         surfaces: SurfaceStore,
         ports: PortStore,
-        netstack: Option<NetStack>,
+        network: Network,
         self_name: Option<String>,
         localhost_only: bool,
     ) -> Self {
@@ -199,7 +198,7 @@ impl PeerManager {
             grants,
             surfaces,
             ports,
-            netstack,
+            network,
             self_name,
             bind_lock: Mutex::new(()),
             localhost_only: AtomicBool::new(localhost_only),
@@ -741,7 +740,7 @@ impl PeerManager {
             peer.label()
                 .unwrap_or_else(|| crate::core::session::default_name(&peer.endpoint_id)),
         );
-        if let Err(e) = self.claim_addr(ip, name.clone()) {
+        if let Err(e) = self.network.claim(ip, name.clone()) {
             error!("cannot claim {} for {}: {}", ip, peer.endpoint_id, e);
             return None;
         }
@@ -765,23 +764,20 @@ impl PeerManager {
     /// on. A peer whose port set does not change never re-announces, so a port
     /// dropped here would stay dark for the life of the connection.
     async fn bind_one(&self, peer: &Arc<Peer>, ip: IpAddr, port: u16) {
-        // TUN backend: register a listener with the userspace stack. The
-        // accept -> QUIC splice happens in run_netstack_accepts. A resident
-        // placeholder task stands in for the binding so bindings tracking and
-        // release work uniformly with the loopback path.
-        if let Some(ns) = &self.netstack {
-            if let IpAddr::V4(v4) = ip {
-                ns.listen(v4, port);
-                peer.bindings.insert(
-                    port,
-                    Binding {
-                        task: tokio::spawn(std::future::pending::<()>()),
-                        at: SocketAddr::from((v4, port)),
-                    },
-                );
-                info!("bound {}:{} (tun)", v4, port);
-                return;
-            }
+        // The tun network listens itself; its accepts are spliced in
+        // run_accepts. A resident placeholder task stands in for the binding
+        // so bindings tracking and release work as on loopback.
+        if self.network.listens_itself() {
+            self.network.listen(ip, port);
+            peer.bindings.insert(
+                port,
+                Binding {
+                    task: tokio::spawn(std::future::pending::<()>()),
+                    at: SocketAddr::from((ip, port)),
+                },
+            );
+            info!("bound {}:{} (tun)", ip, port);
+            return;
         }
 
         if self.is_localhost_only() {
@@ -922,42 +918,17 @@ impl PeerManager {
     }
 
     /// Release one binding, waiting for its task to finish so the listener is
-    /// actually dropped before the port is reused. On the TUN backend, also
-    /// tells the stack to stop listening (reads the peer's surface for the ip).
+    /// actually dropped before the port is reused, and tell the network to
+    /// stop listening there (it reads the peer's surface for the ip).
     async fn release_binding(&self, peer: &Arc<Peer>, port: u16) {
         if let Some((_, binding)) = peer.bindings.remove(&port) {
             binding.task.abort();
             let _ = binding.task.await;
             info!("removed binding for port {}", port);
         }
-        if let Some(ns) = &self.netstack {
-            if let Some(IpAddr::V4(v4)) = peer.surface.read().await.as_ref().map(|s| s.ip) {
-                ns.unlisten(v4, port);
-            }
+        if let Some(ip) = peer.surface.read().await.as_ref().map(|s| s.ip) {
+            self.network.unlisten(ip, port);
         }
-    }
-
-    /// Claim a surface address: on the TUN backend, add it (and its name) to the
-    /// userspace stack; on loopback, add the OS-level address.
-    fn claim_addr(&self, ip: IpAddr, name: Option<String>) -> Result<()> {
-        if let Some(ns) = &self.netstack {
-            if let IpAddr::V4(v4) = ip {
-                ns.add_surface(v4, name);
-            }
-            return Ok(());
-        }
-        surface::ensure_addr(ip)
-    }
-
-    /// Reverse of `claim_addr`.
-    fn unclaim_addr(&self, ip: IpAddr) -> Result<()> {
-        if let Some(ns) = &self.netstack {
-            if let IpAddr::V4(v4) = ip {
-                ns.remove_surface(v4);
-            }
-            return Ok(());
-        }
-        surface::remove_addr(ip)
     }
 
     /// The peer whose surface is bound at `ip` (for routing accepted TUN
@@ -972,14 +943,8 @@ impl PeerManager {
         None
     }
 
-    /// Consume accepted TUN connections and splice each onto its peer's tunnel.
-    pub async fn run_netstack_accepts(
-        self: Arc<Self>,
-        mut accepts: mpsc::UnboundedReceiver<Accept>,
-    ) {
-        if self.netstack.is_none() {
-            return;
-        }
+    /// Splice each connection the network accepted onto its peer's tunnel.
+    pub async fn run_accepts(self: Arc<Self>, mut accepts: mpsc::UnboundedReceiver<Accept>) {
         while let Some(acc) = accepts.recv().await {
             let ip = IpAddr::V4(acc.ip);
             let Some(peer) = self.peer_for_ip(ip).await else {
@@ -1018,7 +983,7 @@ impl PeerManager {
             }
 
             if let Some(surface) = peer.surface.write().await.take() {
-                if let Err(e) = self.unclaim_addr(surface.ip) {
+                if let Err(e) = self.network.unclaim(surface.ip) {
                     warn!("failed to remove address {}: {}", surface.ip, e);
                 }
             }
@@ -1334,14 +1299,9 @@ impl PeerManager {
             .map(|e| *e.key())
     }
 
-    /// The /24 to allocate surface addresses from: the TUN subnet when the
-    /// tun backend is active, else the loopback range.
+    /// The /24 to allocate surface addresses from.
     fn surface_base(&self) -> [u8; 3] {
-        if self.netstack.is_some() {
-            surface::TUN_BASE
-        } else {
-            surface::LOOPBACK_BASE
-        }
+        self.network.base()
     }
 
     /// A snapshot of the addresses currently in use by surfaces.
@@ -1407,7 +1367,7 @@ impl PeerManager {
                 self.release_binding(&peer, port).await;
             }
             *peer.surface.write().await = None;
-            let _ = self.unclaim_addr(old.ip);
+            let _ = self.network.unclaim(old.ip);
         }
 
         // An explicit --as renames the peer, not just its surface, so `list`,
@@ -1422,7 +1382,7 @@ impl PeerManager {
             None => self.new_surface_ip().await?,
         };
 
-        self.claim_addr(ip, name.clone())?;
+        self.network.claim(ip, name.clone())?;
         *peer.surface.write().await = Some(Surface {
             ip,
             name: name.clone(),
@@ -1469,7 +1429,7 @@ impl PeerManager {
         }
         *peer.surface.write().await = None;
 
-        self.unclaim_addr(surface.ip)?;
+        self.network.unclaim(surface.ip)?;
         if let Err(e) = self.surfaces.remove(&id.to_string()) {
             warn!("failed to remove surface record for {}: {}", id, e);
         }
@@ -1499,7 +1459,7 @@ impl PeerManager {
             let Some(peer) = self.peers.get(&id) else {
                 continue;
             };
-            if let Err(e) = self.claim_addr(record.ip, record.name.clone()) {
+            if let Err(e) = self.network.claim(record.ip, record.name.clone()) {
                 warn!("failed to restore address {}: {}", record.ip, e);
                 continue;
             }
