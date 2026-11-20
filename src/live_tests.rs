@@ -1060,3 +1060,37 @@ async fn a_fresh_invitation_replaces_a_refused_one() {
     until(20, || sees_online(&b, &a_key, "a")).await;
     until(20, || sees_online(&a, &b_key, "b")).await;
 }
+
+/// The CLI reaches the daemon over the control socket: tokio's `UnixStream`
+/// on unix, the win_uds shim on Windows. A request sent down it gets the
+/// daemon's answer back.
+#[tokio::test]
+async fn the_control_socket_answers_a_request() {
+    #[cfg(windows)]
+    use crate::uds::{UnixListener, UnixStream};
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    #[cfg(unix)]
+    use tokio::net::{UnixListener, UnixStream};
+
+    let a = TestDaemon::start("ctl", &MemoryLookup::new(), IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
+    let path = a._dir.0.join("ctl.sock");
+    let listener = UnixListener::bind(&path).unwrap();
+    let daemon = a.daemon.clone();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        crate::daemon::handle_client(stream, daemon).await.unwrap();
+    });
+
+    let stream = UnixStream::connect(&path).await.unwrap();
+    let (reader, mut writer) = tokio::io::split(stream);
+    let mut line = serde_json::to_string(&Request::Key).unwrap();
+    line.push('\n');
+    writer.write_all(line.as_bytes()).await.unwrap();
+
+    let mut reply = String::new();
+    BufReader::new(reader).read_line(&mut reply).await.unwrap();
+    match serde_json::from_str::<Response>(&reply).unwrap() {
+        Response::Key(key) => assert_eq!(key, a.key()),
+        other => panic!("expected the key, got {:?}", other),
+    }
+}

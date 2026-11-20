@@ -43,3 +43,57 @@ jobs:
       
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
+
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --verbose
+
+      - name: Run tests
+        run: cargo test --verbose
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      # The CLI and daemon as separate processes, over the default socket in
+      # %TEMP%. --tun has to fail with a message, not start without it.
+      - name: CLI against a running daemon
+        shell: pwsh
+        run: |
+          $exe = "target\debug\pai-sho.exe"
+          $key = Join-Path $env:RUNNER_TEMP "pai-sho\key"
+          $daemon = Start-Process -FilePath $exe -ArgumentList "daemon", "--key", $key -PassThru -NoNewWindow
+          try {
+            $ok = $false
+            for ($i = 0; $i -lt 30 -and -not $ok; $i++) {
+              Start-Sleep -Seconds 1
+              & $exe key
+              $ok = $LASTEXITCODE -eq 0
+            }
+            if (-not $ok) { throw "the daemon never answered on its socket" }
+            & $exe list
+            if ($LASTEXITCODE -ne 0) { throw "list failed" }
+          } finally {
+            Stop-Process -Id $daemon.Id
+          }
+          $out = & $exe daemon --tun ps0 --key $key 2>&1 | Out-String
+          if ($LASTEXITCODE -eq 0) { throw "--tun started on Windows" }
+          if ($out -notmatch "not available on Windows") { throw "unexpected --tun error: $out" }
+          $global:LASTEXITCODE = 0

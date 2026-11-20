@@ -35,7 +35,8 @@ pub enum Command {
         #[arg(short = 'e', long = "expose", value_delimiter = ',')]
         ports: Vec<u16>,
         /// Path to the daemon's secret key (created if missing).
-        /// Defaults to $XDG_STATE_HOME/pai-sho/key (~/.local/state/pai-sho/key)
+        /// Defaults to $XDG_STATE_HOME/pai-sho/key (~/.local/state/pai-sho/key),
+        /// or %LOCALAPPDATA%\pai-sho\key on Windows
         #[arg(long = "key")]
         key_path: Option<std::path::PathBuf>,
         /// Serve the owned `*.pai-sho` resolver on this UDP address (e.g.

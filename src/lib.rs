@@ -10,9 +10,17 @@ pub mod enroll;
 pub mod ffi;
 pub mod grant_store;
 pub mod json_file;
+#[cfg(unix)]
+pub mod launchd;
+#[cfg(not(unix))]
+#[path = "launchd_unsupported.rs"]
 pub mod launchd;
 #[cfg(test)]
 mod live_tests;
+#[cfg(unix)]
+pub mod netstack;
+#[cfg(not(unix))]
+#[path = "netstack_unsupported.rs"]
 pub mod netstack;
 pub mod peer;
 pub mod ports;
@@ -21,5 +29,7 @@ pub mod qr;
 pub mod resolver;
 pub mod surface;
 pub mod tunnel;
+#[cfg(windows)]
+pub mod uds;
 
 pub use command::{Command, DaemonService};

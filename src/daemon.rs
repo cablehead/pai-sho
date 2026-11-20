@@ -7,6 +7,8 @@ use crate::peer::PeerManager;
 use crate::ports::PortStore;
 use crate::protocol::{GrantInfo, ListInfo, Request, Response, ALPN, VERSION};
 use crate::surface::SurfaceStore;
+#[cfg(windows)]
+use crate::uds::{UnixListener, UnixStream};
 use anyhow::{anyhow, Context, Result};
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{Endpoint, EndpointId, SecretKey};
@@ -14,6 +16,7 @@ use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+#[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
@@ -37,6 +40,7 @@ pub struct Daemon {
 }
 
 /// Default key location: $XDG_STATE_HOME/pai-sho/key (~/.local/state/pai-sho/key)
+#[cfg(unix)]
 fn default_key_path() -> PathBuf {
     let base = std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
@@ -45,6 +49,17 @@ fn default_key_path() -> PathBuf {
         })
         .unwrap_or_else(|| PathBuf::from("."));
     base.join("pai-sho").join("key")
+}
+
+/// Default key location on Windows: %LOCALAPPDATA%\pai-sho\key, the per-user
+/// counterpart of ~/.local/state.
+#[cfg(windows)]
+fn default_key_path() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("pai-sho")
+        .join("key")
 }
 
 /// Load the secret key from `path`, or generate one and persist it there.
@@ -426,6 +441,7 @@ const TUN_RESOLVER_IP: std::net::Ipv4Addr = std::net::Ipv4Addr::new(10, 99, 0, 5
 #[allow(clippy::too_many_arguments)]
 /// Chown the control socket to `user`, so a root daemon can hand it to the
 /// logged-in user. Resolves the username to uid/gid via getpwnam.
+#[cfg(unix)]
 fn set_socket_owner(path: &Path, user: &str) -> Result<()> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
@@ -446,6 +462,7 @@ fn set_socket_owner(path: &Path, user: &str) -> Result<()> {
 }
 
 /// Chmod the control socket to an octal `mode` string (e.g. "660").
+#[cfg(unix)]
 fn set_socket_mode(path: &Path, mode: &str) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let m = u32::from_str_radix(mode, 8)
@@ -453,6 +470,16 @@ fn set_socket_mode(path: &Path, mode: &str) -> Result<()> {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(m))
         .with_context(|| format!("chmod {:?}", path))?;
     Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_socket_owner(_path: &Path, _user: &str) -> Result<()> {
+    anyhow::bail!("--socket-owner is not supported on Windows")
+}
+
+#[cfg(not(unix))]
+fn set_socket_mode(_path: &Path, _mode: &str) -> Result<()> {
+    anyhow::bail!("--socket-mode is not supported on Windows")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -468,6 +495,13 @@ pub async fn run(
     socket_mode: Option<String>,
     name: Option<String>,
 ) -> Result<()> {
+    // The TUN backend reads a unix tun device. Say so up front rather than
+    // starting without it.
+    #[cfg(not(unix))]
+    if let Some(dev) = &tun {
+        anyhow::bail!("--tun {dev}: the tun backend is not available on Windows");
+    }
+
     // Clean up old socket
     let _ = std::fs::remove_file(socket_path);
 
@@ -625,8 +659,8 @@ async fn shutdown_signal() {
     }
 }
 
-async fn handle_client(stream: UnixStream, daemon: Arc<Daemon>) -> Result<()> {
-    let (reader, mut writer) = stream.into_split();
+pub(crate) async fn handle_client(stream: UnixStream, daemon: Arc<Daemon>) -> Result<()> {
+    let (reader, mut writer) = tokio::io::split(stream);
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
 

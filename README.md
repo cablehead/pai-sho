@@ -176,6 +176,26 @@ Without `--tun`, peers are bound at loopback addresses (`127.0.1.x`) and you
 serve the resolver yourself with `--resolver <addr>`. Names still resolve, to
 those addresses.
 
+### Windows
+
+pai-sho runs on Windows 10 and later. Start the daemon yourself:
+
+```sh
+pai-sho daemon
+```
+
+It works as on Linux without `--tun`: each peer you connect to gets its own
+local address, such as `127.0.1.5`, and its shared ports answer there. These
+addresses work on any Windows machine, with nothing to install.
+
+`--tun`, `--socket-owner`, `--socket-mode` and the service commands
+(`daemon install`, `up`, `down`, `remove`, `status`) don't work on Windows yet,
+and exit with an error. Without the service, the daemon doesn't start on its
+own at login.
+
+The daemon keeps its key in `%LOCALAPPDATA%\pai-sho\key`. The `pai-sho`
+command talks to it through `%TEMP%\pai-sho.sock`.
+
 ## Usage
 
 ```

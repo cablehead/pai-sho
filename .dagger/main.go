@@ -94,6 +94,40 @@ func (m *PaiSho) MacosBuild(ctx context.Context, src *dagger.Directory, version 
 	return container.File("/tmp/pai-sho-" + version + "-macos-arm64.tar.gz")
 }
 
+func (m *PaiSho) WindowsEnv(
+	ctx context.Context,
+	src *dagger.Directory) *dagger.Container {
+	return m.withCaches(
+		dag.Container().
+			From("joseluisq/rust-linux-darwin-builder:latest").
+			WithExec([]string{"apt", "update"}).
+			WithExec([]string{"apt", "install", "-y", "gcc-mingw-w64-x86-64"}).
+			WithEnvVariable("CC_x86_64_pc_windows_gnu", "x86_64-w64-mingw32-gcc").
+			WithEnvVariable("AR_x86_64_pc_windows_gnu", "x86_64-w64-mingw32-gcc-ar").
+			WithMountedDirectory("/app", src).
+			WithWorkdir("/app"),
+		"windows-amd64",
+	)
+}
+
+func (m *PaiSho) WindowsBuild(ctx context.Context, src *dagger.Directory, version string) *dagger.File {
+	container := m.WindowsEnv(ctx, src).
+		WithExec([]string{"rustup", "update", "stable"}).
+		WithExec([]string{"rustup", "default", "stable"}).
+		WithExec([]string{"rustup", "target", "add", "x86_64-pc-windows-gnu"}).
+		WithExec([]string{"cargo", "build", "--release", "--target", "x86_64-pc-windows-gnu"})
+
+	container = container.WithExec([]string{"sh", "-c", `
+		set -e
+		mkdir -p /tmp/pai-sho-` + version + `
+		cp target/x86_64-pc-windows-gnu/release/pai-sho.exe /tmp/pai-sho-` + version + `/
+		cd /tmp
+		tar -czf pai-sho-` + version + `-windows-amd64.tar.gz pai-sho-` + version + `
+	`})
+
+	return container.File("/tmp/pai-sho-" + version + "-windows-amd64.tar.gz")
+}
+
 func (m *PaiSho) LinuxArm64Env(
 	ctx context.Context,
 	src *dagger.Directory) *dagger.Container {

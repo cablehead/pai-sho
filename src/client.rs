@@ -1,10 +1,13 @@
-//! CLI client - sends commands to daemon over Unix socket.
+//! CLI client - sends commands to daemon over Unix socket (AF_UNIX on Windows too).
 
 use crate::protocol::{Request, Response, VERSION};
+#[cfg(windows)]
+use crate::uds::UnixStream;
 use crate::Command;
 use anyhow::{Context, Result};
 use std::path::Path;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+#[cfg(unix)]
 use tokio::net::UnixStream;
 
 pub async fn send_command(socket_path: &Path, command: Command) -> Result<()> {
@@ -33,7 +36,7 @@ pub async fn send_command(socket_path: &Path, command: Command) -> Result<()> {
         .await
         .context("failed to connect to daemon - is it running?")?;
 
-    let (reader, mut writer) = stream.into_split();
+    let (reader, mut writer) = tokio::io::split(stream);
     let mut reader = BufReader::new(reader);
 
     // Send request
