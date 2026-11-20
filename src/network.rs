@@ -101,10 +101,10 @@ impl Network {
         }
     }
 
-    /// Answer `<name>.pai-sho` with this node's own address `ip`, on the tun
-    /// network's in-stack resolver. A no-op on loopback, where the daemon's
-    /// resolver looks names up itself.
-    pub fn name_self(&self, ip: IpAddr, name: &str) {
+    /// Answer `<name>.pai-sho` with `ip` (this node's own address, or a
+    /// peer's surface after a rename), on the tun network's in-stack resolver.
+    /// A no-op on loopback, where the daemon's resolver looks names up itself.
+    pub fn name(&self, ip: IpAddr, name: &str) {
         match self {
             Network::Loopback => {}
             #[cfg(unix)]

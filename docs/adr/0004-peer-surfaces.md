@@ -1,10 +1,14 @@
 # Peer Surfaces
 
-> **Partly superseded.** [0005](0005-auto-project-and-owned-resolver.md) makes
-> projection automatic and replaces the `/etc/hosts` handle below with an owned
-> resolver. The `surfaces` command is gone, folded into `list`, and "enrollment
-> label" is now the name from `--as`, or a truncated key. What stands: a surface
-> is a peer's ports at their own address, and `project` / `unproject` control it.
+> **Partly superseded** by [0005](0005-auto-project-and-owned-resolver.md).
+> Projection happens on its own. The daemon answers `.pai-sho` names itself,
+> with no `/etc/hosts` entries. `list` shows surfaces, and there is no
+> `surfaces` command. The "enrollment label" below is the name given with
+> `--as`, or a shortened key. A surface has no name of its own: DNS answers
+> with its peer's name.
+>
+> The rest holds. A surface is a peer's ports at an address of their own, and
+> `project` and `unproject` turn it on and off.
 
 ## Context
 

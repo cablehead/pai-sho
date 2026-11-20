@@ -146,7 +146,7 @@ pub enum Command {
         name: Option<String>,
     },
 
-    /// Take a peer's surface down: unbind its ports, drop its address and name
+    /// Take a peer's surface down: unbind its ports and drop its address
     Unproject {
         /// Peer to unproject (a key or the name you gave it)
         peer: String,

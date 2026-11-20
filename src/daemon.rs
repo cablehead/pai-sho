@@ -551,7 +551,7 @@ pub async fn run(
     // (CORS). The tun network's in-stack resolver reads the name map
     // directly; in loopback mode PeerManager::resolve_name handles it.
     if let Some(n) = &name {
-        network.name_self(host, n);
+        network.name(host, n);
     }
 
     let key_path = key_path.unwrap_or_else(default_key_path);
