@@ -24,7 +24,8 @@ const OPERATOR: &str = "/usr/local/libexec/pai-sho-operator";
 const KEY: &str = "/usr/local/var/pai-sho/op.key";
 const LOG: &str = "/usr/local/var/log/pai-sho-operator.log";
 const RESOLVER: &str = "/etc/resolver/pai-sho";
-const SOCKET: &str = "/tmp/pai-sho.sock";
+/// Next to the key. The start-up script hands it to whoever is at the screen.
+pub const SOCKET: &str = "/usr/local/var/pai-sho/pai-sho.sock";
 const RESOLVER_ADDR: &str = "10.99.0.53";
 
 pub fn install() -> Result<()> {
@@ -542,7 +543,7 @@ mod tests {
             "printf 'nameserver 10.99.0.53\\n' > /etc/resolver/pai-sho",
             "KEY=\"/usr/local/var/pai-sho/op.key\"",
             "u=$(stat -f%Su /dev/console) || exit 1",
-            "exec /usr/local/libexec/pai-sho --socket /tmp/pai-sho.sock daemon \\",
+            "exec /usr/local/libexec/pai-sho --socket /usr/local/var/pai-sho/pai-sho.sock daemon \\",
             "  --key \"$KEY\" --tun utun --socket-owner \"$u\"",
         ] {
             assert!(
@@ -618,7 +619,7 @@ system/pai-sho = {
                 "disabled": false,
                 "installed": true,
                 "loaded": true,
-                "socket": "/tmp/pai-sho.sock",
+                "socket": "/usr/local/var/pai-sho/pai-sho.sock",
                 "socket_owner": "ndyg",
                 "key": "/usr/local/var/pai-sho/op.key",
                 "resolver": "/etc/resolver/pai-sho",

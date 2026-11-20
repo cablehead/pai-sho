@@ -4,7 +4,7 @@ use std::net::{IpAddr, SocketAddr};
 #[derive(Subcommand, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DaemonService {
     /// Install and start the launchd service. Copies this binary to
-    /// /usr/local/libexec/pai-sho. The socket is /tmp/pai-sho.sock, the key
+    /// /usr/local/libexec/pai-sho. The socket is /usr/local/var/pai-sho/pai-sho.sock, the key
     /// is /usr/local/var/pai-sho/op.key, and .pai-sho resolves at 10.99.0.53.
     Install,
     /// Start the launchd service. Restarts it when it is already loaded, so

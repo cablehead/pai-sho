@@ -15,25 +15,14 @@ A peer's ports come up under the name you gave it, like vibenv-ndyg.pai-sho.",
     version
 )]
 struct Cli {
-    /// Path to Unix socket
-    #[arg(long, default_value_t = default_socket())]
-    socket: String,
+    /// Path to the daemon's socket. Defaults to pai-sho.sock next to the key
+    /// (~/.local/state/pai-sho, or %LOCALAPPDATA%\pai-sho on Windows); the
+    /// other commands also look for the macOS service's
+    #[arg(long)]
+    socket: Option<std::path::PathBuf>,
 
     #[command(subcommand)]
     command: Command,
-}
-
-/// /tmp/pai-sho.sock on unix. On Windows, pai-sho.sock in the user's temp
-/// directory (%TEMP%), the nearest thing to /tmp.
-fn default_socket() -> String {
-    if cfg!(windows) {
-        std::env::temp_dir()
-            .join("pai-sho.sock")
-            .to_string_lossy()
-            .into_owned()
-    } else {
-        "/tmp/pai-sho.sock".to_string()
-    }
 }
 
 #[tokio::main]
@@ -46,8 +35,6 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
-
-    let socket_path = std::path::Path::new(&cli.socket);
 
     match cli.command {
         Command::Daemon {
@@ -68,9 +55,10 @@ async fn main() -> Result<()> {
             Some(DaemonService::Remove) => launchd::remove()?,
             Some(DaemonService::Status) => launchd::status()?,
             None => {
+                let socket_path = cli.socket.unwrap_or_else(daemon::default_socket_path);
                 daemon::run(
                     host,
-                    socket_path,
+                    &socket_path,
                     accept,
                     ports,
                     key_path,
@@ -84,7 +72,8 @@ async fn main() -> Result<()> {
             }
         },
         _ => {
-            client::send_command(socket_path, cli.command).await?;
+            let socket_path = cli.socket.unwrap_or_else(client::find_socket);
+            client::send_command(&socket_path, cli.command).await?;
         }
     }
 
