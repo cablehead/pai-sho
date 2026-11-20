@@ -225,7 +225,9 @@ pai-sho [--socket <path>] <command>
 its socket next to its key, in `~/.local/state/pai-sho/pai-sho.sock`, and the
 other commands look there. On a Mac running the service, the socket is
 `/usr/local/var/pai-sho/pai-sho.sock`, owned by whoever is logged in at the
-screen, and the commands find it there too.
+screen, and the commands find it there too. They still look in
+`/tmp/pai-sho.sock`, where the socket was in 0.5.6 and earlier, and warn that it's
+deprecated; the next release stops looking there.
 
 ### Daemon Options
 

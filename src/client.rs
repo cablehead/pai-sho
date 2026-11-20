@@ -11,8 +11,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 /// The socket of the daemon to talk to, when `--socket` doesn't say: your own
-/// daemon's, next to its key, else the macOS service's. When neither exists
-/// yet, your own, so the error names where it looked first.
+/// daemon's, next to its key, else the macOS service's, else the deprecated
+/// `/tmp` one with a warning. When none exists yet, your own, so the error
+/// names where it looked first.
 pub fn find_socket() -> PathBuf {
     let own = crate::daemon::default_socket_path();
     if own.exists() {
@@ -25,8 +26,26 @@ pub fn find_socket() -> PathBuf {
             return service.to_path_buf();
         }
     }
+    // Deprecated: where the socket was in 0.5.6 and earlier.
+    // Remove in the release after the one that moved it.
+    #[cfg(unix)]
+    {
+        let old = std::path::Path::new(OLD_SOCKET);
+        if old.exists() {
+            eprintln!(
+                "warning: using {OLD_SOCKET}, which is deprecated: the next \
+                 release won't look there. A daemon started without --socket \
+                 now puts it at {}.",
+                own.display()
+            );
+            return old.to_path_buf();
+        }
+    }
     own
 }
+
+#[cfg(unix)]
+const OLD_SOCKET: &str = "/tmp/pai-sho.sock";
 
 pub async fn send_command(socket_path: &Path, command: Command) -> Result<()> {
     let qr = matches!(command, Command::Invite { qr: true, .. });
