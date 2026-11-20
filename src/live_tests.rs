@@ -86,9 +86,15 @@ impl TestDaemon {
     async fn start(tag: &str, lookup: &MemoryLookup, host: IpAddr) -> Self {
         let dir = TempDir::new(tag);
         let endpoint = test_endpoint(lookup).await;
-        let daemon = Daemon::with_endpoint(endpoint, host, &dir.prefix(), None, None)
-            .await
-            .unwrap();
+        let daemon = Daemon::with_endpoint(
+            endpoint,
+            host,
+            &dir.prefix(),
+            crate::network::Network::Loopback,
+            None,
+        )
+        .await
+        .unwrap();
         let router = daemon.spawn_router();
         Self {
             daemon,
@@ -708,7 +714,14 @@ async fn restart(d: TestDaemon, peers: &[&TestDaemon], at_localhost: bool) -> Te
     let daemon = if at_localhost {
         Daemon::with_endpoint_at_localhost(endpoint, host, &_dir.prefix()).await
     } else {
-        Daemon::with_endpoint(endpoint, host, &_dir.prefix(), None, None).await
+        Daemon::with_endpoint(
+            endpoint,
+            host,
+            &_dir.prefix(),
+            crate::network::Network::Loopback,
+            None,
+        )
+        .await
     }
     .unwrap();
     let router = daemon.spawn_router();

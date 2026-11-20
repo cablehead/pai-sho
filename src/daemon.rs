@@ -3,6 +3,7 @@
 use crate::core::invite::{Handle, Invite};
 use crate::core::session::Session;
 use crate::enroll::Pins;
+use crate::network::Network;
 use crate::peer::PeerManager;
 use crate::ports::PortStore;
 use crate::protocol::{GrantInfo, ListInfo, Request, Response, ALPN, VERSION};
@@ -106,7 +107,7 @@ impl Daemon {
     pub async fn new(
         host: IpAddr,
         key_path: &Path,
-        netstack: Option<crate::netstack::NetStack>,
+        network: crate::network::Network,
         name: Option<String>,
     ) -> Result<Arc<Self>> {
         let secret_key = load_or_create_key(key_path)?;
@@ -118,7 +119,7 @@ impl Daemon {
             .await
             .context("failed to create iroh endpoint")?;
 
-        Self::with_endpoint(endpoint, host, key_path, netstack, name).await
+        Self::with_endpoint(endpoint, host, key_path, network, name).await
     }
 
     /// Build a daemon on an endpoint the caller already bound. Tests use this
@@ -130,14 +131,14 @@ impl Daemon {
         endpoint: Endpoint,
         host: IpAddr,
         state_prefix: &Path,
-        netstack: Option<crate::netstack::NetStack>,
+        network: crate::network::Network,
         name: Option<String>,
     ) -> Result<Arc<Self>> {
         Self::assemble(
             endpoint,
             host,
             state_prefix,
-            netstack,
+            network,
             name,
             cfg!(target_os = "ios"),
         )
@@ -152,14 +153,22 @@ impl Daemon {
         host: IpAddr,
         state_prefix: &Path,
     ) -> Result<Arc<Self>> {
-        Self::assemble(endpoint, host, state_prefix, None, None, true).await
+        Self::assemble(
+            endpoint,
+            host,
+            state_prefix,
+            crate::network::Network::Loopback,
+            None,
+            true,
+        )
+        .await
     }
 
     async fn assemble(
         endpoint: Endpoint,
         host: IpAddr,
         state_prefix: &Path,
-        netstack: Option<crate::netstack::NetStack>,
+        network: crate::network::Network,
         name: Option<String>,
         localhost_only: bool,
     ) -> Result<Arc<Self>> {
@@ -191,7 +200,7 @@ impl Daemon {
                 grants,
                 surfaces,
                 ports,
-                netstack,
+                network,
                 name,
                 localhost_only,
             )),
@@ -507,42 +516,41 @@ pub async fn run(
 
     // Bring up the TUN owned-network backend if requested. Its stream of
     // accepted connections is spliced onto peer tunnels below.
-    let netstack = match &tun {
-        Some(dev) => match crate::netstack::spawn(dev, TUN_RESOLVER_IP) {
-            Ok((ns, accepts)) => {
+    let (network, accepts) = match &tun {
+        Some(dev) => match Network::tun(dev, TUN_RESOLVER_IP) {
+            Ok((network, accepts)) => {
                 info!(
                     "tun backend up on {} (resolver {}:53)",
                     dev, TUN_RESOLVER_IP
                 );
-                Some((ns, accepts))
+                (network, Some(accepts))
             }
             Err(e) => {
                 error!("tun backend failed on {}: {}", dev, e);
-                None
+                (Network::Loopback, None)
             }
         },
-        None => None,
+        None => (Network::Loopback, None),
     };
-    let ns_handle = netstack.as_ref().map(|(ns, _)| ns.clone());
 
     // Self-name: <name>.pai-sho resolves to where our own services are (the
     // --host forward address), so local traffic uses the same origin peers do
-    // (CORS). On the TUN backend the in-stack resolver reads the name map
+    // (CORS). The tun network's in-stack resolver reads the name map
     // directly; in loopback mode PeerManager::resolve_name handles it.
-    if let (Some(ns), Some(n), IpAddr::V4(h)) = (ns_handle.as_ref(), name.as_ref(), host) {
-        ns.add_surface(h, Some(n.clone()));
+    if let Some(n) = &name {
+        network.name_self(host, n);
     }
 
     let key_path = key_path.unwrap_or_else(default_key_path);
-    let daemon = Daemon::new(host, &key_path, ns_handle, name).await?;
+    let daemon = Daemon::new(host, &key_path, network, name).await?;
 
     println!("Ticket: {}", daemon.ticket());
     info!("daemon started, host={}, key={}", host, key_path.display());
 
-    // Splice accepted TUN connections onto peer tunnels.
-    if let Some((_, accepts)) = netstack {
+    // Splice the tun network's accepted connections onto peer tunnels.
+    if let Some(accepts) = accepts {
         let peers = daemon.peers.clone();
-        tokio::spawn(async move { peers.run_netstack_accepts(accepts).await });
+        tokio::spawn(async move { peers.run_accepts(accepts).await });
     }
 
     // Serve the loopback owned resolver, if requested (independent of --tun,

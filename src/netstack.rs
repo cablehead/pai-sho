@@ -11,6 +11,7 @@
 //! an unprivileged process; see ~/ps-netstack-probe. The daemon opens a
 //! pre-created, app-owned tun, so it holds no capabilities at runtime.
 
+use crate::network::Accept;
 use crate::resolver;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -25,21 +26,13 @@ use tokio_smoltcp::smoltcp::{
     phy::{DeviceCapabilities, Medium},
     wire::{HardwareAddress, IpAddress, IpCidr},
 };
-use tokio_smoltcp::{Net, NetConfig, TcpStream};
+use tokio_smoltcp::{Net, NetConfig};
 use tracing::{error, info, warn};
 
 const MTU: usize = 1500;
 
 /// Live listener accept-loops, keyed by the surface (ip, port) they serve.
 type Listeners = Arc<Mutex<HashMap<(Ipv4Addr, u16), JoinHandle<()>>>>;
-
-/// An accepted TCP connection on a surface, handed to the daemon to splice onto
-/// the owning peer's tunnel. `stream` is a real async TCP stream.
-pub struct Accept {
-    pub ip: Ipv4Addr,
-    pub port: u16,
-    pub stream: TcpStream,
-}
 
 /// Handle the daemon uses to drive the stack.
 #[derive(Clone)]
@@ -87,7 +80,14 @@ impl NetStack {
             loop {
                 match listener.accept().await {
                     Ok((stream, _from)) => {
-                        if tx.send(Accept { ip, port, stream }).is_err() {
+                        if tx
+                            .send(Accept {
+                                ip,
+                                port,
+                                stream: Box::new(stream),
+                            })
+                            .is_err()
+                        {
                             break;
                         }
                     }
