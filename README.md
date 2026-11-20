@@ -259,6 +259,11 @@ over the encrypted QUIC connection. It goes both ways: something on your own
 the key comes from `pai-sho key` on the machine you are granting to. Once that
 peer is admitted, `--to` also takes the name `list` shows for it.
 
+pai-sho keeps one connection open to each peer, and sends all your traffic to
+that peer through it, so a new browser tab or ssh session to the peer starts
+instantly. You can have up to 100 of those open to one peer at a time. The
+101st waits until one closes.
+
 **The network.** With `--tun`, the daemon runs its own TCP/IP stack on a private
 network interface. The daemon sits at `10.99.0.1`, peers get addresses on
 `10.99.1.x`, and the resolver answers at `10.99.0.53:53`. On Linux the
