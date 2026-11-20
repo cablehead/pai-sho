@@ -5,10 +5,28 @@ use crate::protocol::{Request, Response, VERSION};
 use crate::uds::UnixStream;
 use crate::Command;
 use anyhow::{Context, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 #[cfg(unix)]
 use tokio::net::UnixStream;
+
+/// The socket of the daemon to talk to, when `--socket` doesn't say: your own
+/// daemon's, next to its key, else the macOS service's. When neither exists
+/// yet, your own, so the error names where it looked first.
+pub fn find_socket() -> PathBuf {
+    let own = crate::daemon::default_socket_path();
+    if own.exists() {
+        return own;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let service = std::path::Path::new(crate::launchd::SOCKET);
+        if service.exists() {
+            return service.to_path_buf();
+        }
+    }
+    own
+}
 
 pub async fn send_command(socket_path: &Path, command: Command) -> Result<()> {
     let qr = matches!(command, Command::Invite { qr: true, .. });

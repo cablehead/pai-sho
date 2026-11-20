@@ -39,27 +39,36 @@ pub struct Daemon {
     peers: Arc<PeerManager>,
 }
 
-/// Default key location: $XDG_STATE_HOME/pai-sho/key (~/.local/state/pai-sho/key)
+/// Where a daemon you start yourself keeps its state, the key and the socket:
+/// $XDG_STATE_HOME/pai-sho (~/.local/state/pai-sho).
 #[cfg(unix)]
-fn default_key_path() -> PathBuf {
+pub fn state_dir() -> PathBuf {
     let base = std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
         .or_else(|| {
             std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local").join("state"))
         })
         .unwrap_or_else(|| PathBuf::from("."));
-    base.join("pai-sho").join("key")
+    base.join("pai-sho")
 }
 
-/// Default key location on Windows: %LOCALAPPDATA%\pai-sho\key, the per-user
-/// counterpart of ~/.local/state.
+/// On Windows, %LOCALAPPDATA%\pai-sho, the per-user counterpart of
+/// ~/.local/state.
 #[cfg(windows)]
-fn default_key_path() -> PathBuf {
+pub fn state_dir() -> PathBuf {
     std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
         .join("pai-sho")
-        .join("key")
+}
+
+fn default_key_path() -> PathBuf {
+    state_dir().join("key")
+}
+
+/// The socket a daemon you start yourself listens on: next to its key.
+pub fn default_socket_path() -> PathBuf {
+    state_dir().join("pai-sho.sock")
 }
 
 /// Load the secret key from `path`, or generate one and persist it there.
@@ -504,6 +513,10 @@ pub async fn run(
 
     // Clean up old socket
     let _ = std::fs::remove_file(socket_path);
+    if let Some(dir) = socket_path.parent() {
+        std::fs::create_dir_all(dir)
+            .with_context(|| format!("failed to create {}", dir.display()))?;
+    }
 
     // Bring up the TUN owned-network backend if requested. Its stream of
     // accepted connections is spliced onto peer tunnels below.

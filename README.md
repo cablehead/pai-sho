@@ -193,8 +193,7 @@ addresses work on any Windows machine, with nothing to install.
 and exit with an error. Without the service, the daemon doesn't start on its
 own at login.
 
-The daemon keeps its key in `%LOCALAPPDATA%\pai-sho\key`. The `pai-sho`
-command talks to it through `%TEMP%\pai-sho.sock`.
+The daemon keeps its key and its socket in `%LOCALAPPDATA%\pai-sho`.
 
 ## Usage
 
@@ -222,7 +221,11 @@ pai-sho [--socket <path>] <command>
 | `unproject <peer>` | Take a peer's surface down (unbind its ports) |
 | `list` | Peers, grants, and where their ports are bound (JSON) |
 
-`--socket` is global, not specific to `daemon`.
+`--socket` is global, not specific to `daemon`. By default the daemon keeps
+its socket next to its key, in `~/.local/state/pai-sho/pai-sho.sock`, and the
+other commands look there. On a Mac running the service, the socket is
+`/usr/local/var/pai-sho/pai-sho.sock`, owned by whoever is logged in at the
+screen, and the commands find it there too.
 
 ### Daemon Options
 
