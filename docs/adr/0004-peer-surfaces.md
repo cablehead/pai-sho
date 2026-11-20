@@ -3,8 +3,10 @@
 > **Partly superseded.** [0005](0005-auto-project-and-owned-resolver.md) makes
 > projection automatic and replaces the `/etc/hosts` handle below with an owned
 > resolver. The `surfaces` command is gone, folded into `list`, and "enrollment
-> label" is now the name from `--as`, or a truncated key. What stands: a surface
-> is a peer's ports at their own address, and `project` / `unproject` control it.
+> label" is now the name from `--as`, or a truncated key. A surface no longer
+> keeps a name of its own: it answers to the peer's name, so a rename by any route
+> moves it. What stands: a surface is a peer's ports at their own address, and
+> `project` / `unproject` control it.
 
 ## Context
 

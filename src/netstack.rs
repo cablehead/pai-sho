@@ -46,11 +46,14 @@ pub struct NetStack {
 }
 
 impl NetStack {
-    /// Record a surface's name for the resolver. With `any_ip` the address needs
-    /// no interface change, so this is just the name map.
+    /// Answer `name` with `ip` in the resolver, in place of any name `ip` had.
+    /// With `any_ip` the address needs no interface change, so this is just the
+    /// name map. A rename calls it again with the new name.
     pub fn add_surface(&self, ip: Ipv4Addr, name: Option<String>) {
+        let mut names = self.names.lock().unwrap();
+        names.retain(|_, v| *v != ip);
         if let Some(name) = name {
-            self.names.lock().unwrap().insert(name, ip);
+            names.insert(name, ip);
         }
     }
 

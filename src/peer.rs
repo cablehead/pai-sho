@@ -227,17 +227,28 @@ impl PeerManager {
         surface::allocate(&taken, self.surface_base())
     }
 
-    /// Call a peer by a new name, here and in its pin, so `list`, `--to` and
-    /// a restart all go by it. Its surface keeps its old name until projected.
+    /// Call a peer by a new name, here and in its pin, so `list`, `--to`, a
+    /// restart and `<name>.pai-sho` all go by it. Every rename comes through
+    /// here: `rename`, a name given on `accept`, and `project --as`.
     async fn rename(self: &Arc<Self>, peer: &Arc<Peer>, name: String) {
         *peer.label.write().unwrap() = Some(name.clone());
         let actions = self.session.lock().unwrap().rename(&peer.endpoint_id, name);
         self.apply(peer, actions).await;
+        let surface = peer.surface.read().await.clone();
+        if let Some(surface) = surface {
+            self.network.name(surface.ip, &Self::surface_name(peer));
+        }
     }
 
-    /// Call a peer, by key or its current name, by a new name. A projected
-    /// peer projects again at the same address, so its surface answers to the
-    /// new name too.
+    /// The name a peer's surface answers to: its own, or a short form of its
+    /// key when nothing named it.
+    fn surface_name(peer: &Peer) -> String {
+        peer.label()
+            .unwrap_or_else(|| crate::core::session::default_name(&peer.endpoint_id))
+    }
+
+    /// Call a peer, by key or its current name, by a new name. Its surface
+    /// keeps its address and answers to the new name.
     pub async fn rename_peer(self: &Arc<Self>, peer_ref: &str, name: String) -> Result<()> {
         let id = self
             .resolve_peer(peer_ref)
@@ -247,14 +258,8 @@ impl PeerManager {
             .get(&id)
             .ok_or_else(|| anyhow!("no such peer: {}", peer_ref))?
             .clone();
-        let surface = peer.surface.read().await.clone();
-        match surface {
-            Some(s) => self.project(&id.to_string(), Some(s.ip), Some(name)).await,
-            None => {
-                self.rename(&peer, name).await;
-                Ok(())
-            }
-        }
+        self.rename(&peer, name).await;
+        Ok(())
     }
 
     /// Take up an invitation, or reach a peer known by key. We dial this peer
@@ -734,22 +739,15 @@ impl PeerManager {
                 return None;
             }
         };
-        // Every surface answers by name. Nothing named this peer, so it gets
-        // a short form of its key until `project --as` renames it.
-        let name = Some(
-            peer.label()
-                .unwrap_or_else(|| crate::core::session::default_name(&peer.endpoint_id)),
-        );
-        if let Err(e) = self.network.claim(ip, name.clone()) {
+        // Every surface answers to its peer's name, or a short form of its key
+        // until something names it.
+        if let Err(e) = self.network.claim(ip, Some(Self::surface_name(peer))) {
             error!("cannot claim {} for {}: {}", ip, peer.endpoint_id, e);
             return None;
         }
 
-        *peer.surface.write().await = Some(Surface {
-            ip,
-            name: name.clone(),
-        });
-        if let Err(e) = self.surfaces.add(&peer.endpoint_id.to_string(), ip, name) {
+        *peer.surface.write().await = Some(Surface { ip });
+        if let Err(e) = self.surfaces.add(&peer.endpoint_id.to_string(), ip) {
             warn!("failed to persist surface for {}: {}", peer.endpoint_id, e);
         }
         info!("auto-projected {} to {}", peer.endpoint_id, ip);
@@ -1316,8 +1314,9 @@ impl PeerManager {
         ips
     }
 
-    /// Resolve a surface name to its address, for the owned resolver. Matches
-    /// the name a surface was projected under, from `--as` or a truncated key.
+    /// Resolve a name to a surface's address, for the owned resolver. Matches
+    /// the peer's own name as it is now, or a short form of its key when
+    /// nothing named it.
     pub async fn resolve_name(&self, label: &str) -> Option<IpAddr> {
         // Our own name resolves to where our services are: the --host forward
         // address (default 127.0.0.1). The TUN backend answers self-name the
@@ -1328,7 +1327,7 @@ impl PeerManager {
         let peers: Vec<Arc<Peer>> = self.peers.iter().map(|e| e.value().clone()).collect();
         for peer in peers {
             if let Some(surface) = peer.surface.read().await.as_ref() {
-                if surface.name.as_deref() == Some(label) {
+                if Self::surface_name(&peer) == label {
                     return Some(surface.ip);
                 }
             }
@@ -1370,24 +1369,19 @@ impl PeerManager {
             let _ = self.network.unclaim(old.ip);
         }
 
-        // An explicit --as renames the peer, not just its surface, so `list`,
-        // `--to` and the resolver all go by the new name. Without --as the
-        // surface takes the peer's current label, so it still has a handle.
-        if let Some(name) = &name {
-            self.rename(&peer, name.clone()).await;
+        // --as is a rename: the surface has no name of its own, so `list`,
+        // `--to` and the resolver all go by the peer's.
+        if let Some(name) = name {
+            self.rename(&peer, name).await;
         }
-        let name = name.or_else(|| peer.label());
         let ip = match ip {
             Some(ip) => ip,
             None => self.new_surface_ip().await?,
         };
 
-        self.network.claim(ip, name.clone())?;
-        *peer.surface.write().await = Some(Surface {
-            ip,
-            name: name.clone(),
-        });
-        if let Err(e) = self.surfaces.add(&id.to_string(), ip, name) {
+        self.network.claim(ip, Some(Self::surface_name(&peer)))?;
+        *peer.surface.write().await = Some(Surface { ip });
+        if let Err(e) = self.surfaces.add(&id.to_string(), ip) {
             warn!("failed to persist surface for {}: {}", id, e);
         }
 
@@ -1440,8 +1434,10 @@ impl PeerManager {
 
     /// List every known peer and its surface (projected or not).
     /// Re-apply persisted surfaces at startup: restore each address so a
-    /// projected peer keeps its IP and name across a restart. Ports rebind
-    /// when the peer reconnects and re-announces.
+    /// projected peer keeps its IP across a restart. Ports rebind when the peer
+    /// reconnects and re-announces. A record from before surfaces took the
+    /// peer's name may still carry one: a peer with no name of its own adopts
+    /// it, and the record is saved again without it.
     pub async fn restore_surfaces(self: &Arc<Self>) {
         let records = match self.surfaces.load() {
             Ok(records) => records,
@@ -1456,17 +1452,25 @@ impl PeerManager {
                 Ok(id) => id,
                 Err(_) => continue,
             };
-            let Some(peer) = self.peers.get(&id) else {
+            let Some(peer) = self.peers.get(&id).map(|p| p.clone()) else {
                 continue;
             };
-            if let Err(e) = self.network.claim(record.ip, record.name.clone()) {
+            if let Some(old) = record.name {
+                // A surface nothing named carried a short form of the key,
+                // which is what an unnamed peer answers to anyway.
+                if peer.label().is_none() && old != crate::core::session::default_name(&id) {
+                    info!("{} takes its surface's name, {}", id, old);
+                    self.rename(&peer, old).await;
+                }
+                if let Err(e) = self.surfaces.add(&record.key, record.ip) {
+                    warn!("failed to rewrite surface record for {}: {}", id, e);
+                }
+            }
+            if let Err(e) = self.network.claim(record.ip, Some(Self::surface_name(&peer))) {
                 warn!("failed to restore address {}: {}", record.ip, e);
                 continue;
             }
-            *peer.surface.write().await = Some(Surface {
-                ip: record.ip,
-                name: record.name,
-            });
+            *peer.surface.write().await = Some(Surface { ip: record.ip });
         }
     }
 

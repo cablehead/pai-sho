@@ -732,6 +732,117 @@ async fn restart(d: TestDaemon, peers: &[&TestDaemon], at_localhost: bool) -> Te
     }
 }
 
+/// A port no one listens on, for a test that only checks where a daemon binds.
+fn free_port() -> u16 {
+    let probe = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    probe.local_addr().unwrap().port()
+}
+
+/// Two daemons where `b` binds every peer at 127.0.0.1, as on iOS, so a test
+/// of surfaces needs no loopback alias (and no root on macOS). Both forward
+/// to 127.0.0.2, leaving 127.0.0.1 to `b`'s bindings.
+async fn pair_at_localhost() -> (TestDaemon, TestDaemon) {
+    let (a, b) = pair(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2))).await;
+    b.daemon.peers().bind_at_localhost();
+    (a, b)
+}
+
+/// A name given on `accept` to a peer we already know renames it, and its
+/// address answers to the new name at once: the surface keeps no name of its
+/// own to fall behind.
+#[tokio::test]
+async fn a_rename_by_accept_moves_the_dns_name() {
+    let port = free_port();
+    let (a, b) = pair_at_localhost().await;
+    enroll(&a, &b, "b").await;
+    a.request(Request::Expose {
+        port,
+        to: vec![b.key()],
+        all: false,
+    })
+    .await;
+    bound_addr(&b, port).await;
+    let ip = b.daemon.peers().resolve_name("a").await.unwrap();
+
+    match b
+        .request(Request::Accept {
+            handle: a.key(),
+            name: Some("laptop".into()),
+        })
+        .await
+    {
+        Response::Ok => {}
+        other => panic!("accept failed: {:?}", other),
+    }
+
+    let a_key = a.key();
+    until(5, || sees_online(&b, &a_key, "laptop")).await;
+    assert_eq!(b.daemon.peers().resolve_name("laptop").await, Some(ip));
+    assert!(b.daemon.peers().resolve_name("a").await.is_none());
+}
+
+/// A surfaces file from before surfaces took the peer's name may carry one.
+/// After a restart, a peer with no name of its own takes it, answers to it,
+/// and the file no longer carries it.
+#[tokio::test]
+async fn an_old_surface_name_becomes_the_peers_name() {
+    let port = free_port();
+    let (a, b) = pair_at_localhost().await;
+    let invite = match a
+        .request(Request::Invite {
+            key: None,
+            name: Some("b".into()),
+            expose: vec![],
+        })
+        .await
+    {
+        Response::Invite(i) => i,
+        other => panic!("expected an invitation, got {:?}", other),
+    };
+    match b
+        .request(Request::Accept {
+            handle: invite,
+            name: None,
+        })
+        .await
+    {
+        Response::Ok => {}
+        other => panic!("accept failed: {:?}", other),
+    }
+    a.request(Request::Expose {
+        port,
+        to: vec![b.key()],
+        all: false,
+    })
+    .await;
+    bound_addr(&b, port).await;
+
+    let file = b._dir.prefix().with_extension("surfaces.json");
+    let mut records: Vec<serde_json::Value> =
+        serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert_eq!(records.len(), 1);
+    assert!(
+        records[0].get("name").is_none(),
+        "a new record names nothing"
+    );
+    records[0]["name"] = "dev-neutrino".into();
+    std::fs::write(&file, serde_json::to_string(&records).unwrap()).unwrap();
+
+    let b = restart(b, &[&a], true).await;
+
+    let a_key = a.key();
+    until(20, || sees_online(&b, &a_key, "dev-neutrino")).await;
+    assert!(b
+        .daemon
+        .peers()
+        .resolve_name("dev-neutrino")
+        .await
+        .is_some());
+    let records: Vec<serde_json::Value> =
+        serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert!(records[0].get("name").is_none(), "the old name was kept");
+}
+
 /// An `expose` outlives a restart: the grant is saved next to the key, and
 /// the restarted daemon offers the port to its grantee again. `b` grants and
 /// restarts, since it's the side that calls the other back.

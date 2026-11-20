@@ -304,9 +304,9 @@ both serve `8080`. `project` overrides the defaults (pin an address with `--ip`,
 rename with `--as`), `unproject` takes a surface down, and projections survive a
 restart ([ADR 0004](docs/adr/0004-peer-surfaces.md)).
 
-**Resolver.** The daemon answers `<name>.pai-sho` from the live surface table, so
-`vibenv-ndyg.pai-sho` reaches that peer's ports and stops resolving when the peer goes
-away. It is authoritative for the one suffix and never touches the rest of your
+**Resolver.** The daemon answers `<name>.pai-sho` with the surface of the peer
+that has that name now, so `vibenv-ndyg.pai-sho` reaches that peer's ports, follows
+it through a rename, and stops resolving when the peer goes away. It is authoritative for the one suffix and never touches the rest of your
 DNS. Point the OS at it for `.pai-sho` only: `/etc/resolver/pai-sho` on macOS, a
 dnsmasq `server=/pai-sho/10.99.0.53` forward on Linux
 ([ADR 0005](docs/adr/0005-auto-project-and-owned-resolver.md)).

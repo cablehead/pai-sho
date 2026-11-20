@@ -1,8 +1,10 @@
 //! Surfaces - a peer's ports projected to a dedicated local address.
 //!
 //! A surface binds a peer's granted ports at one IP you choose or that is
-//! allocated from `127.0.1.0/24`, and carries an optional name that the owned
-//! resolver serves under `*.pai-sho`. See docs/adr/0004-peer-surfaces.md.
+//! allocated from `127.0.1.0/24`. The owned resolver serves it under
+//! `<name>.pai-sho`, where the name is the peer's own: a surface keeps no name
+//! of its own, so a rename moves the DNS answer too. See
+//! docs/adr/0004-peer-surfaces.md.
 //!
 //! Claiming the address is behind one helper so the rest of the daemon never
 //! shells out. `ensure_addr` / `remove_addr` is a no-op on Linux, where all of
@@ -17,11 +19,11 @@ use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 
-/// A projected surface: where a peer's ports are bound locally.
+/// A projected surface: where a peer's ports are bound locally. Its name is
+/// the peer's, looked up when asked for.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Surface {
     pub ip: IpAddr,
-    pub name: Option<String>,
 }
 
 /// Loopback backend: surfaces live in `127.0.1.0/24` (all of `127/8` routes to
@@ -125,6 +127,9 @@ fn run(cmd: &str, args: &[&str]) -> Result<()> {
 pub struct SurfaceRecord {
     pub key: String,
     pub ip: IpAddr,
+    /// A name from before surfaces took the peer's own. Read once at startup,
+    /// adopted as the peer's name if it has none, and never written again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 }
 
@@ -144,13 +149,13 @@ impl SurfaceStore {
         self.file.load()
     }
 
-    pub fn add(&self, key: &str, ip: IpAddr, name: Option<String>) -> Result<()> {
+    pub fn add(&self, key: &str, ip: IpAddr) -> Result<()> {
         let mut records = self.load()?;
         records.retain(|r| r.key != key);
         records.push(SurfaceRecord {
             key: key.to_string(),
             ip,
-            name,
+            name: None,
         });
         self.save(&records)
     }
