@@ -178,15 +178,27 @@ those addresses.
 
 ### Windows
 
-Windows 10 and later run the daemon and CLI on loopback, as Linux does without
-`--tun`: `127.0.0.0/8` is already loopback, so peers bind at `127.0.1.x` with no
-setup. `--tun` is not available, and neither are the `daemon install` service
-commands or `--socket-owner` and `--socket-mode`. The control socket is a Unix
-socket at `%TEMP%\pai-sho.sock`, and the key is `%LOCALAPPDATA%\pai-sho\key`.
+pai-sho runs on Windows 10 and later. Start the daemon yourself:
 
 ```sh
 pai-sho daemon
 ```
+
+It works as on Linux without `--tun`: each peer you connect to gets its own
+local address, such as `127.0.1.5`, and its shared ports answer there. These
+addresses work on any Windows machine, with nothing to install.
+
+Not on Windows yet:
+
+- `--tun`
+- installing the daemon as a service (`daemon install`, `up`, `down`,
+  `remove`, `status`), so it doesn't start on its own at login
+- `--socket-owner` and `--socket-mode`
+
+Each of these stops with an error that says so.
+
+The daemon keeps its key in `%LOCALAPPDATA%\pai-sho\key`. The `pai-sho`
+command talks to it through `%TEMP%\pai-sho.sock`.
 
 ## Usage
 
