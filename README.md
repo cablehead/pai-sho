@@ -188,14 +188,10 @@ It works as on Linux without `--tun`: each peer you connect to gets its own
 local address, such as `127.0.1.5`, and its shared ports answer there. These
 addresses work on any Windows machine, with nothing to install.
 
-Not on Windows yet:
-
-- `--tun`
-- installing the daemon as a service (`daemon install`, `up`, `down`,
-  `remove`, `status`), so it doesn't start on its own at login
-- `--socket-owner` and `--socket-mode`
-
-Each of these stops with an error that says so.
+`--tun`, `--socket-owner`, `--socket-mode` and the service commands
+(`daemon install`, `up`, `down`, `remove`, `status`) don't work on Windows yet,
+and exit with an error. Without the service, the daemon doesn't start on its
+own at login.
 
 The daemon keeps its key in `%LOCALAPPDATA%\pai-sho\key`. The `pai-sho`
 command talks to it through `%TEMP%\pai-sho.sock`.
