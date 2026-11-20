@@ -1,15 +1,14 @@
 # Peer Surfaces
 
-> **Partly superseded.** [0005](0005-auto-project-and-owned-resolver.md)
-> changed parts of this decision. Projection now happens on its own, and the
-> daemon answers `.pai-sho` names itself, in place of the `/etc/hosts` entries
-> described below. The `surfaces` command is gone, and `list` shows surfaces
-> instead. The "enrollment label" below is now the name given with `--as`, or a
-> shortened key. A surface no longer has a name of its own: DNS answers with its
-> peer's name, so renaming the peer renames the surface.
+> **Partly superseded** by [0005](0005-auto-project-and-owned-resolver.md).
+> Projection happens on its own. The daemon answers `.pai-sho` names itself,
+> with no `/etc/hosts` entries. `list` shows surfaces, and there is no
+> `surfaces` command. The "enrollment label" below is the name given with
+> `--as`, or a shortened key. A surface has no name of its own: DNS answers
+> with its peer's name.
 >
-> The rest still holds. A surface is a peer's ports at an address of their own,
-> and `project` and `unproject` turn it on and off.
+> The rest holds. A surface is a peer's ports at an address of their own, and
+> `project` and `unproject` turn it on and off.
 
 ## Context
 
