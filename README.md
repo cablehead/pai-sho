@@ -160,24 +160,23 @@ echo "nameserver 10.99.0.53" | sudo tee /etc/resolver/pai-sho
 ### Linux
 
 Run the daemon as your own user. Each peer you connect to gets its own loopback
-address, such as `127.0.1.5`, and its shared ports answer there. Linux routes
-all of `127.0.0.0/8` to the loopback interface, so this needs no setup and no
-root.
+address. If `buildbox` gets `127.0.1.5` and shares port 8080, you reach it at
+`127.0.1.5:8080`. This needs no setup and no root, because Linux sends all of
+`127.0.0.0/8` to the loopback interface.
 
-To reach peers by name, have the daemon serve the `.pai-sho` resolver on a high
-port, and send `.pai-sho` lookups to it, for example with a dnsmasq
-`server=/pai-sho/127.0.0.1#5353` forward:
+To reach peers by name, start the daemon with `--resolver` on a port above 1024
+and send `.pai-sho` lookups to that port. With dnsmasq, the forward is
+`server=/pai-sho/127.0.0.1#5353`:
 
 ```sh
 pai-sho daemon --resolver 127.0.0.1:5353
 ```
 
-Linux lets only root listen on ports below 1024, so a peer's 443 or 22 won't
-bind for a daemon running as your user, and the daemon logs a
-`failed to bind 127.0.1.5:443` error. With `--tun`, the same flag the macOS
-service uses, the daemon runs its own network stack on a TUN interface and
-answers those ports itself. Create the interface once as root and hand it to
-your user:
+A daemon running as your user can't use a peer's ports below 1024, such as 22
+or 443, because Linux lets only root listen on them. The daemon logs
+`failed to bind 127.0.1.5:443`. To use those ports without root, run the daemon
+with `--tun`, as the macOS service does. The daemon then handles every port in
+its own network stack, on a TUN interface you create once as root:
 
 ```sh
 sudo ip tuntap add dev ps0 mode tun user "$USER"
@@ -186,8 +185,8 @@ sudo ip link set ps0 up
 pai-sho daemon --tun ps0
 ```
 
-Peers then get `10.99.1.x` addresses, and the resolver answers at `10.99.0.53`
-on port 53, so the dnsmasq forward becomes `server=/pai-sho/10.99.0.53`.
+Peers then get `10.99.1.x` addresses. The resolver is at `10.99.0.53` on port
+53, so the dnsmasq forward becomes `server=/pai-sho/10.99.0.53`.
 
 ### Windows
 
@@ -198,8 +197,8 @@ pai-sho daemon
 ```
 
 It works as on Linux: each peer you connect to gets its own local address, such
-as `127.0.1.5`, and its shared ports answer there. These addresses work on any
-Windows machine, with nothing to install.
+as `127.0.1.5`, and you reach the ports it shares at that address. These
+addresses work on any Windows machine, with nothing to install.
 
 `--tun`, `--socket-owner`, `--socket-mode` and the service commands
 (`daemon install`, `up`, `down`, `remove`, `status`) don't work on Windows yet,
