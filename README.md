@@ -102,11 +102,11 @@ Homebrew ships the same kind of service, and does not start it on its own. See
 
 ## Setting up the network
 
-`--tun` puts each peer on a private `10.99.0.0/16` network. The daemon sits at
-`10.99.0.1`, peers land on `10.99.1.x`, and the daemon's resolver answers
-`*.pai-sho` at `10.99.0.53`.
-
 ### macOS
+
+The service runs the daemon with `--tun`, which puts each peer on a private
+`10.99.0.0/16` network. The daemon sits at `10.99.0.1`, peers land on
+`10.99.1.x`, and the daemon's resolver answers `*.pai-sho` at `10.99.0.53`.
 
 `daemon install` writes a LaunchDaemon, copies this binary to
 `/usr/local/libexec/pai-sho`, and starts it as root. It prompts for an
@@ -159,8 +159,25 @@ echo "nameserver 10.99.0.53" | sudo tee /etc/resolver/pai-sho
 
 ### Linux
 
-Create the interface ahead of time and hand it to the daemon's user, so the
-daemon itself runs unprivileged:
+Run the daemon as your own user. Each peer you connect to gets its own loopback
+address, such as `127.0.1.5`, and its shared ports answer there. Linux routes
+all of `127.0.0.0/8` to the loopback interface, so this needs no setup and no
+root.
+
+To reach peers by name, have the daemon serve the `.pai-sho` resolver on a high
+port, and send `.pai-sho` lookups to it, for example with a dnsmasq
+`server=/pai-sho/127.0.0.1#5353` forward:
+
+```sh
+pai-sho daemon --resolver 127.0.0.1:5353
+```
+
+Linux lets only root listen on ports below 1024, so a peer's 443 or 22 won't
+bind for a daemon running as your user, and the daemon logs a
+`failed to bind 127.0.1.5:443` error. With `--tun`, the same flag the macOS
+service uses, the daemon runs its own network stack on a TUN interface and
+answers those ports itself. Create the interface once as root and hand it to
+your user:
 
 ```sh
 sudo ip tuntap add dev ps0 mode tun user "$USER"
@@ -169,12 +186,8 @@ sudo ip link set ps0 up
 pai-sho daemon --tun ps0
 ```
 
-Then send `.pai-sho` to `10.99.0.53`, for example with a dnsmasq
-`server=/pai-sho/10.99.0.53` forward.
-
-Without `--tun`, peers are bound at loopback addresses (`127.0.1.x`) and you
-serve the resolver yourself with `--resolver <addr>`. Names still resolve, to
-those addresses.
+Peers then get `10.99.1.x` addresses, and the resolver answers at `10.99.0.53`
+on port 53, so the dnsmasq forward becomes `server=/pai-sho/10.99.0.53`.
 
 ### Windows
 
@@ -184,9 +197,9 @@ pai-sho runs on Windows 10 and later. Start the daemon yourself:
 pai-sho daemon
 ```
 
-It works as on Linux without `--tun`: each peer you connect to gets its own
-local address, such as `127.0.1.5`, and its shared ports answer there. These
-addresses work on any Windows machine, with nothing to install.
+It works as on Linux: each peer you connect to gets its own local address, such
+as `127.0.1.5`, and its shared ports answer there. These addresses work on any
+Windows machine, with nothing to install.
 
 `--tun`, `--socket-owner`, `--socket-mode` and the service commands
 (`daemon install`, `up`, `down`, `remove`, `status`) don't work on Windows yet,
