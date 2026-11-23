@@ -271,3 +271,26 @@ import Testing
         #expect(WebView.Coordinator.failedURL(NSError(domain: NSURLErrorDomain, code: -1)) == nil)
     }
 }
+
+@Suite struct LocalhostProxyRoutes {
+    @Test func aPeerNameGoesToLoopback() {
+        #expect(LocalhostProxy.target("chunker.localhost") == "127.0.0.1")
+        #expect(LocalhostProxy.target("Mac-Abcdefgh.LOCALHOST") == "127.0.0.1")
+        #expect(LocalhostProxy.target("localhost") == "127.0.0.1")
+        #expect(LocalhostProxy.target("chunker.localhost.") == "127.0.0.1")
+    }
+
+    @Test func anyOtherNameGoesWhereItSays() {
+        #expect(LocalhostProxy.target("example.com") == "example.com")
+        #expect(LocalhostProxy.target("localhost.example.com") == "localhost.example.com")
+        #expect(LocalhostProxy.target("notlocalhost") == "notlocalhost")
+    }
+
+    @Test func connectTargetsParse() {
+        #expect(LocalhostProxy.hostPort("chunker.localhost:3042", defaultPort: 443).map { "\($0.0) \($0.1)" } == "chunker.localhost 3042")
+        #expect(LocalhostProxy.hostPort("example.com", defaultPort: 443).map { "\($0.0) \($0.1)" } == "example.com 443")
+        #expect(LocalhostProxy.hostPort("[::1]:8080", defaultPort: 443).map { "\($0.0) \($0.1)" } == "::1 8080")
+        #expect(LocalhostProxy.hostPort(":80", defaultPort: 443) == nil)
+        #expect(LocalhostProxy.hostPort("host:notaport", defaultPort: 443) == nil)
+    }
+}

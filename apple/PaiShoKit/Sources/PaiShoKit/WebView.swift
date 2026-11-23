@@ -192,7 +192,10 @@ struct WebView: PageRepresentable {
         guard context.coordinator.loaded != url else { return }
         context.coordinator.loaded = url
         context.coordinator.retries = Coordinator.maxRetries
-        view.load(URLRequest(url: url))
+        // Before iOS 26 the page goes through LocalhostProxy, so it waits
+        // for the proxy to be listening.
+        let url = url
+        LocalhostProxy.shared.whenReady { view.load(URLRequest(url: url)) }
     }
 }
 
