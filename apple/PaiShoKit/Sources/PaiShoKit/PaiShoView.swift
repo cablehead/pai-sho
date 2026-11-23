@@ -45,7 +45,7 @@ public struct PaiShoView<Controls: View>: View {
 
     public var body: some View {
         NavigationSplitView {
-            PeerList(store: store, selection: $selection, controls: controls)
+            PeerList(store: store, selection: $selection, controls: controls, onAdd: { sheet = .scan })
                 .navigationTitle("Pai Sho")
                 #if os(macOS)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260)
@@ -168,6 +168,10 @@ struct PeerList<Controls: View>: View {
     let store: PeerStore
     @Binding var selection: PortID?
     let controls: Controls
+    /// Opens the Scan sheet. On an iPad before iPadOS 26 the list carries its
+    /// own Add peer row: there the sidebar shows no toolbar button, so the
+    /// toolbar's Add peer never appeared.
+    var onAdd: () -> Void = {}
     /// The row a peer's forgetting was asked from, which the confirmation
     /// points at.
     @State private var forgetting: String?
@@ -178,6 +182,14 @@ struct PeerList<Controls: View>: View {
     var body: some View {
         List(selection: $selection) {
             controls
+            #if os(iOS)
+            if #unavailable(iOS 26), UIDevice.current.userInterfaceIdiom == .pad {
+                Button(action: onAdd) {
+                    Label("Add peer", systemImage: "qrcode.viewfinder")
+                }
+                .accessibilityIdentifier("Add peer row")
+            }
+            #endif
             ForEach(store.peers) { peer in
                 Section {
                     if peer.ports.isEmpty {
