@@ -61,10 +61,21 @@ final class ShareModel {
             guard let type else { continue }
             provider.loadFileRepresentation(forTypeIdentifier: type.identifier) { url, _ in
                 guard let url, let data = try? Data(contentsOf: url) else { return }
-                let name = url.lastPathComponent
-                Task { @MainActor in self.files.append(Shared(name: name, data: data)) }
+                let (bytes, name) = Self.unwrap(data, name: url.lastPathComponent)
+                Task { @MainActor in self.files.append(Shared(name: name, data: bytes)) }
             }
         }
+    }
+
+    /// A screenshot shared straight from its editor is handed over as an
+    /// image object, and its file representation is that object archived
+    /// (NSKeyedArchiver), not the picture. Send the PNG it holds instead.
+    nonisolated static func unwrap(_ data: Data, name: String) -> (Data, String) {
+        guard data.starts(with: Data("bplist00".utf8)),
+              let image = try? NSKeyedUnarchiver.unarchivedObject(ofClass: UIImage.self, from: data),
+              let png = image.pngData()
+        else { return (data, name) }
+        return (png, (name as NSString).deletingPathExtension + ".png")
     }
 
     /// Start pai-sho with the app's key, then list the ports peers share as
