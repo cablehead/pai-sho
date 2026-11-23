@@ -47,6 +47,14 @@ struct Target: Identifiable, Hashable {
 final class ShareModel {
     var files: [Shared] = []
     var targets: [Target] = []
+    /// The ports whose site takes shares, by target id: what its manifest's
+    /// share_target says. Remembered between shares, so the sheet lists them
+    /// at once and checks again behind.
+    var found: [String: ShareTarget] = ShareModel.remembered()
+    /// Ports checked since the sheet opened, taking shares or not, and those
+    /// whose check hasn't come back yet.
+    var checked: Set<String> = []
+    var pending: Set<String> = []
     var problem: String?
     var sending: Target?
     var sent: Target?
@@ -105,7 +113,8 @@ final class ShareModel {
         Task { await watch() }
     }
 
-    /// Ask pai-sho for its peers until one is picked.
+    /// Ask pai-sho for its peers until one is picked, and check each port
+    /// once for a share target.
     func watch() async {
         let client = DaemonClient(socketPath: Self.socket)
         while sent == nil {
@@ -115,35 +124,65 @@ final class ShareModel {
                         peer.address(port: port).map { Target(peer: peer.title, port: port, address: $0) }
                     }
                 }
+                for target in targets where !checked.contains(target.id) {
+                    checked.insert(target.id)
+                    pending.insert(target.id)
+                    Task { await self.check(target) }
+                }
             }
             try? await Task.sleep(for: .milliseconds(500))
         }
     }
 
-    /// Send each file to `target`, over http first, then https, as the app
-    /// opens a port's page.
+    /// The ports to offer: those whose site takes shares.
+    var sharing: [Target] { targets.filter { found[$0.id] != nil } }
+
+    /// Read the port's page, the manifest it links to, and its share_target,
+    /// over http first, then https, as the app opens a port's page.
+    func check(_ target: Target) async {
+        var result: ShareTarget?
+        for scheme in ["http", "https"] {
+            guard let page = URL(string: "\(scheme)://\(target.address)/") else { continue }
+            guard let (html, _) = try? await Uploader.session.data(from: page),
+                  let manifest = ShareTarget.manifestURL(html: String(decoding: html, as: UTF8.self), page: page),
+                  let (data, _) = try? await Uploader.session.data(from: manifest)
+            else { continue }
+            result = ShareTarget.from(manifest: data, at: manifest)
+            break
+        }
+        found[target.id] = result
+        pending.remove(target.id)
+        Self.remember(found)
+    }
+
+    private static let rememberKey = "shareTargets"
+    static func remembered() -> [String: ShareTarget] {
+        guard let data = UserDefaults.standard.data(forKey: rememberKey) else { return [:] }
+        return (try? JSONDecoder().decode([String: ShareTarget].self, from: data)) ?? [:]
+    }
+    static func remember(_ found: [String: ShareTarget]) {
+        if let data = try? JSONEncoder().encode(found) { UserDefaults.standard.set(data, forKey: rememberKey) }
+    }
+
+    /// Send the files to `target`'s share target, as one form.
     func send(to target: Target) async {
+        guard let share = found[target.id] else { return }
         sending = target
         problem = nil
         defer { sending = nil }
-        for file in files {
-            let name = file.name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "file"
-            var done = false
-            for scheme in ["http", "https"] {
-                guard let url = URL(string: "\(scheme)://\(target.address)/uploads/\(name)") else { continue }
-                var request = URLRequest(url: url)
-                request.httpMethod = "POST"
-                request.httpBody = file.data
-                if let (_, response) = try? await Uploader.session.data(for: request),
-                   let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
-                    done = true
-                    break
-                }
-            }
-            guard done else {
-                problem = "\(target.peer) : \(target.port) did not take \(file.name)."
-                return
-            }
+        let shared = files.map { file in
+            (name: file.name, type: UTType(filenameExtension: (file.name as NSString).pathExtension)?.preferredMIMEType ?? "application/octet-stream", data: file.data)
+        }
+        let (body, contentType) = share.form(files: shared)
+        var request = URLRequest(url: share.action)
+        request.httpMethod = "POST"
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        request.httpBody = body
+        guard let (_, response) = try? await Uploader.session.data(for: request),
+              let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode)
+        else {
+            problem = "\(target.peer) : \(target.port) did not take the share."
+            return
         }
         sent = target
         try? await Task.sleep(for: .seconds(1))
@@ -179,14 +218,19 @@ struct ShareView: View {
                 }
                 if let sent = model.sent {
                     Label("Sent to \(sent.peer) : " + String(sent.port), systemImage: "checkmark.circle.fill")
-                } else if model.targets.isEmpty, model.problem == nil {
-                    HStack {
-                        ProgressView()
-                        Text("Connecting to your peers...").foregroundStyle(.secondary)
+                } else if model.sharing.isEmpty, model.problem == nil {
+                    if model.targets.isEmpty || !model.pending.isEmpty {
+                        HStack {
+                            ProgressView()
+                            Text("Looking for ports that take shares...").foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text("None of your peers' ports take shares. A site takes them by naming a share target in its web app manifest.")
+                            .foregroundStyle(.secondary)
                     }
                 } else {
                     Section {
-                        ForEach(model.targets) { target in
+                        ForEach(model.sharing) { target in
                             Button {
                                 Task { await model.send(to: target) }
                             } label: {

@@ -294,3 +294,40 @@ import Testing
         #expect(LocalhostProxy.hostPort("host:notaport", defaultPort: 443) == nil)
     }
 }
+
+@Suite struct ShareTargets {
+    let page = URL(string: "https://127.0.0.1:55327/requests/")!
+
+    @Test func aPageNamesItsManifest() {
+        let html = #"<head><link rel="icon" href="/i.svg"><link rel="manifest" href="/manifest.webmanifest"></head>"#
+        #expect(ShareTarget.manifestURL(html: html, page: page)?.absoluteString == "https://127.0.0.1:55327/manifest.webmanifest")
+        #expect(ShareTarget.manifestURL(html: "<link rel=icon href=x>", page: page) == nil)
+    }
+
+    @Test func aManifestWithAShareTarget() throws {
+        let manifest = Data(#"""
+        {"name":"n2","share_target":{"action":"/share","method":"POST","enctype":"multipart/form-data",
+         "params":{"title":"title","text":"text","files":[{"name":"files","accept":["image/*"]}]}}}
+        """#.utf8)
+        let url = URL(string: "https://127.0.0.1:55327/manifest.webmanifest")!
+        let t = try #require(ShareTarget.from(manifest: manifest, at: url))
+        #expect(t.action.absoluteString == "https://127.0.0.1:55327/share")
+        #expect(t.files == "files")
+        #expect(t.text == "text")
+    }
+
+    @Test func aManifestThatCannotTakeFiles() {
+        let url = URL(string: "https://example.com/m.json")!
+        #expect(ShareTarget.from(manifest: Data(#"{"name":"x"}"#.utf8), at: url) == nil)
+        #expect(ShareTarget.from(manifest: Data(#"{"share_target":{"action":"/s","method":"GET","params":{"text":"t"}}}"#.utf8), at: url) == nil)
+    }
+
+    @Test func theFormHoldsTheFilesAndTheWords() throws {
+        let t = ShareTarget(action: URL(string: "https://h/share")!, files: "files", text: "text")
+        let (body, type) = t.form(files: [(name: "IMG_1.PNG", type: "image/png", data: Data([1, 2, 3]))], text: "hi", boundary: "B")
+        #expect(type == "multipart/form-data; boundary=B")
+        let s = String(decoding: body, as: UTF8.self)
+        #expect(s.contains("name=\"text\"\r\n\r\nhi\r\n"))
+        #expect(s.contains("name=\"files\"; filename=\"IMG_1.PNG\"\r\nContent-Type: image/png\r\n\r\n\u{1}\u{2}\u{3}\r\n--B--\r\n"))
+    }
+}
