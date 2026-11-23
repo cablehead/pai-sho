@@ -200,6 +200,17 @@ It works as on Linux: each peer you connect to gets its own local address, such
 as `127.0.1.5`, and you reach the ports it shares at that address. These
 addresses work on any Windows machine, with nothing to install.
 
+To reach peers by name, start the daemon with `--resolver` on port 53, then
+tell Windows to send `.pai-sho` lookups to it. Windows can only send them to
+port 53. Add the rule once, in PowerShell as administrator:
+
+```powershell
+pai-sho daemon --resolver 127.0.0.1:53
+Add-DnsClientNrptRule -Namespace ".pai-sho" -NameServers "127.0.0.1"
+```
+
+`buildbox.pai-sho` then resolves to `buildbox`'s address.
+
 `--tun`, `--socket-owner`, `--socket-mode` and the service commands
 (`daemon install`, `up`, `down`, `remove`, `status`) don't work on Windows yet,
 and exit with an error. Without the service, the daemon doesn't start on its
