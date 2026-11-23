@@ -1,6 +1,7 @@
 #if os(iOS)
 import Foundation
 import Observation
+import PaiShoKit
 
 /// The pai-sho process, run inside this app by `pai_sho_start`.
 ///
@@ -17,11 +18,21 @@ final class InAppProcess {
     private(set) var running = false
     private(set) var problem: String?
 
+    /// Where the key and the files pai-sho keeps beside it live.
+    static var base: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("pai-sho", isDirectory: true)
+    }
+
+    /// Hand the key and peer list to the share extension (`SharedState`).
+    static func share() {
+        SharedState.save(from: base)
+    }
+
     func start() {
         guard !running else { return }
         let fm = FileManager.default
-        let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("pai-sho", isDirectory: true)
+        let base = Self.base
         do {
             try fm.createDirectory(at: base, withIntermediateDirectories: true)
         } catch {
@@ -44,6 +55,7 @@ final class InAppProcess {
         case 0, -2:
             running = true
             problem = nil
+            Self.share()
         default:
             problem = "pai_sho_start returned \(code)"
         }

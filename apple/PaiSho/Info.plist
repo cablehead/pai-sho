@@ -38,6 +38,8 @@
 	<string>Scan a pai-sho invitation.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Reach your peers directly when they are on the same network.</string>
+	<key>PaiShoKeychainGroup</key>
+	<string>$(AppIdentifierPrefix)stream.cross.pai-sho.shared</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

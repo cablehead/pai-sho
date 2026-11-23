@@ -471,6 +471,50 @@ final class PaiShoUITests: XCTestCase {
         attach(app, "tapped-bottom")
     }
 
+    /// Shares the newest photo in Photos to Pai Sho, and sends it to the
+    /// first port listed. The simulator's Pai Sho must already have a peer
+    /// sharing a port with it. PAI_SHO_SHOTS, when set, is a folder each step
+    /// writes a screenshot to.
+    func testShareAPhoto() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard env["PAI_SHO_SHARE"] != nil else { throw XCTSkip("set TEST_RUNNER_PAI_SHO_SHARE") }
+        let shots = env["PAI_SHO_SHOTS"]
+        func shot(_ app: XCUIApplication, _ name: String) {
+            attach(app, name)
+            if let shots {
+                try? app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "\(shots)/\(name).png"))
+            }
+        }
+        // Opening the app saves its key and peers for the extension.
+        let app = XCUIApplication()
+        app.launch()
+        sleep(5)
+
+        let photos = XCUIApplication(bundleIdentifier: "com.apple.mobileslideshow")
+        photos.launch()
+        sleep(3)
+        if photos.buttons["Continue"].exists { photos.buttons["Continue"].tap(); sleep(2) }
+        shot(photos, "1-photos")
+        let cell = photos.cells.firstMatch
+        let first = cell.waitForExistence(timeout: 5) ? cell : photos.images.firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 10), "no photo")
+        first.tap()
+        sleep(2)
+        photos.buttons["Share"].firstMatch.tap()
+        sleep(3)
+        shot(photos, "2-sheet")
+        let paiSho = photos.cells["Pai Sho"].exists ? photos.cells["Pai Sho"] : photos.buttons["Pai Sho"].firstMatch
+        XCTAssertTrue(paiSho.waitForExistence(timeout: 10), "Pai Sho not in the share sheet")
+        paiSho.tap()
+        sleep(8)
+        shot(photos, "3-pai-sho")
+        let row = photos.buttons.matching(NSPredicate(format: "label CONTAINS ':'")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 60), "no port listed")
+        row.tap()
+        sleep(3)
+        shot(photos, "4-sent")
+    }
+
     private func attach(_ app: XCUIApplication, _ name: String) {
         let shot = XCTAttachment(screenshot: app.screenshot())
         shot.name = name

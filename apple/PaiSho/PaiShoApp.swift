@@ -57,6 +57,8 @@ struct PaiShoApp: App {
             .onChange(of: phase) { _, now in
                 if now == .background, !wasInBackground {
                     wasInBackground = true
+                    // Peers added since the start, for the share extension.
+                    InAppProcess.share()
                     resumeOnReturn = process.running
                     if resumeOnReturn { sleeping = sleepInBackground() }
                 }
