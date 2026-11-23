@@ -263,9 +263,12 @@ public struct PortPage: View {
                 // it, WebKit lost the room above the buttons once it closed.
                 .ignoresSafeArea(edges: [.top, .bottom])
                 // Behind the buttons, a frosted strip: the page shows through
-                // it, but a tap there is the strip's, not the page's.
+                // it, but a tap there is the strip's, not the page's. Only
+                // from iOS 26, where the buttons float over the page; before
+                // that the bar of buttons has a background of its own, and
+                // the strip showed as a grey band above it.
                 .overlay(alignment: .bottom) {
-                    if covered > 0, !typing {
+                    if #available(iOS 26, *), covered > 0, !typing {
                         Rectangle()
                             .fill(.ultraThinMaterial)
                             .frame(height: covered)
