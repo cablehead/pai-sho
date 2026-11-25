@@ -61,6 +61,19 @@ import Testing
         #expect(peers.first { $0.key == "b" }?.asleep == false)
     }
 
+    @Test func anOnlinePeerSaysItsPath() throws {
+        let reply = """
+        {"List":{"me":"m","peers":[\
+        {"key":"a","name":"mac","online":true,"path":"relay","admission":"code","they_expose":[],"ip":null,"bound":[]},\
+        {"key":"b","name":"old","online":true,"admission":"code","they_expose":[],"ip":null,"bound":[]}\
+        ],"i_expose":[],"grants":[]}}
+        """
+        let peers = try DaemonClient.peers(fromListReply: Data(reply.utf8))
+        #expect(peers.first { $0.key == "a" }?.path == "relay")
+        // A daemon older than `path` leaves it out.
+        #expect(peers.first { $0.key == "b" }?.path == nil)
+    }
+
     @Test func aPeerBeingRedialedIsDialing() throws {
         let reply = """
         {"List":{"me":"m","peers":[\

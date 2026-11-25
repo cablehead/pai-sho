@@ -206,7 +206,7 @@ struct PeerList<Controls: View>: View {
                         )
                     }
                 } header: {
-                    peerMenu(PeerHeader(title: store.title(for: peer), status: store.status(of: peer)), peer, row: "\(peer.key)/header", swipe: false)
+                    peerMenu(PeerHeader(title: store.title(for: peer), status: store.status(of: peer), path: peer.path), peer, row: "\(peer.key)/header", swipe: false)
                         .accessibilityIdentifier("peer-\(store.title(for: peer))")
                 }
             }
@@ -338,6 +338,17 @@ var appVersion: String {
 struct PeerHeader: View {
     var title: String
     var status: PeerStatus
+    /// "direct" or "relay" while online, from a daemon that says
+    var path: String? = nil
+
+    private var label: String {
+        switch status {
+        case .connecting, .starting: return "\(status.rawValue)..."
+        case .online where path == "direct": return "direct"
+        case .online where path == "relay": return "relayed"
+        default: return status.rawValue
+        }
+    }
 
     private var dot: Color {
         switch status {
@@ -354,7 +365,7 @@ struct PeerHeader: View {
                 .frame(width: 8, height: 8)
             Text(title)
             Spacer()
-            Text(status == .connecting || status == .starting ? "\(status.rawValue)..." : status.rawValue)
+            Text(label)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
