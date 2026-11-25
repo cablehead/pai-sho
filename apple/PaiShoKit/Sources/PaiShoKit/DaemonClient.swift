@@ -11,6 +11,10 @@ public struct Peer: Identifiable, Hashable, Sendable {
     /// The daemon is trying to reach it: waiting to redial, or dialing.
     /// False from a daemon older than `dialing`.
     public var dialing: Bool
+    /// The path its connection sends on now: "direct", or "relay" through a
+    /// relay server. Nil while it is offline, and from a daemon older than
+    /// `path`.
+    public var path: String?
     /// Ports this peer exposes to us
     public var ports: [UInt16]
     /// The local address its ports are bound at, absent when not projected
@@ -27,6 +31,7 @@ public struct Peer: Identifiable, Hashable, Sendable {
         online: Bool = false,
         asleep: Bool = false,
         dialing: Bool = false,
+        path: String? = nil,
         ports: [UInt16] = [],
         ip: String? = nil,
         boundAt: [UInt16: String]? = nil
@@ -36,6 +41,7 @@ public struct Peer: Identifiable, Hashable, Sendable {
         self.online = online
         self.asleep = asleep
         self.dialing = dialing
+        self.path = path
         self.ports = ports
         self.ip = ip
         self.boundAt = boundAt
@@ -316,6 +322,7 @@ public struct DaemonClient: Sendable {
             online: row["online"] as? Bool ?? false,
             asleep: row["asleep"] as? Bool ?? false,
             dialing: row["dialing"] as? Bool ?? false,
+            path: row["path"] as? String,
             ports: ports,
             ip: row["ip"] as? String,
             boundAt: boundAt

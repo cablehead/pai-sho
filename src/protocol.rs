@@ -122,6 +122,11 @@ pub struct PeerInfo {
     /// daemon older than this field.
     #[serde(default)]
     pub dialing: bool,
+    /// The path its connection sends on now: "direct", or "relay" when the
+    /// data goes through a relay server. Absent while it is offline, and from
+    /// a daemon older than this field.
+    #[serde(default)]
+    pub path: Option<String>,
     /// How this peer came to be admitted: "added", "code", or "key"
     pub admission: String,
     /// Ports this peer exposes to us
@@ -238,6 +243,7 @@ mod tests {
         )
         .unwrap();
         assert!(!peer.asleep);
+        assert!(peer.path.is_none());
     }
 
     /// A daemon older than Goodbye fails to parse it. Its receiver logs the

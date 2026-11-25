@@ -349,6 +349,22 @@ async fn list_shows_our_version_and_the_peers() {
 }
 
 #[tokio::test]
+async fn a_peer_on_loopback_lists_as_direct() {
+    let (a, b) = pair(IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
+    enroll(&a, &b, "b").await;
+
+    // Relays are off in these tests, so the only path is the direct one.
+    until(20, || async {
+        let Response::List(list) = a.request(Request::List).await else {
+            return None;
+        };
+        let b_row = list.peers.iter().find(|p| p.key == b.key())?;
+        (b_row.online && b_row.path.as_deref() == Some("direct")).then_some(())
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn an_unenrolled_peer_is_refused() {
     let (a, b) = pair(IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
 

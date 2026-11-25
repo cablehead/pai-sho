@@ -1240,11 +1240,12 @@ impl PeerManager {
         let peers: Vec<Arc<Peer>> = self.peers.iter().map(|e| e.value().clone()).collect();
         let mut result = Vec::new();
         for peer in peers {
-            let online = {
+            let (online, path) = {
                 let conn = peer.connection.read().await;
-                conn.as_ref()
-                    .map(|c| c.close_reason().is_none())
-                    .unwrap_or(false)
+                match conn.as_ref().filter(|c| c.close_reason().is_none()) {
+                    Some(c) => (true, selected_path(c)),
+                    None => (false, None),
+                }
             };
             let asleep = peer.reach.lock().unwrap().asleep();
             let dialing = !online && peer.dialing.load(Ordering::Relaxed);
@@ -1272,6 +1273,7 @@ impl PeerManager {
                 online,
                 asleep,
                 dialing,
+                path,
                 admission: admission.to_string(),
                 they_expose: peer.exposed_ports.read().await.clone(),
                 version: peer.version.read().await.clone(),
@@ -1615,5 +1617,19 @@ impl PeerConnection for Arc<Peer> {
         send.write_all(&port.to_be_bytes()).await?;
 
         Ok((send, recv))
+    }
+}
+
+/// The path a connection sends on now: "direct" over UDP, or "relay" through
+/// a relay server. None before iroh has picked one.
+fn selected_path(conn: &Connection) -> Option<String> {
+    let paths = conn.paths();
+    let path = paths.iter().find(|p| p.is_selected())?;
+    if path.is_ip() {
+        Some("direct".to_string())
+    } else if path.is_relay() {
+        Some("relay".to_string())
+    } else {
+        None
     }
 }
